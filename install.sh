@@ -43,8 +43,12 @@ FRESH_INSTALL=0
 
 usage() {
     cat <<'EOF'
-Usage: sudo ./install.sh [options]     system install (recommended on a server)
-       ./install.sh [options]          user install (your own files only)
+Usage: sudo ./install.sh [options]     the recommended setup: Backup Suite for the
+                                       whole server (as root) and a GUI that runs
+                                       as your login (no root)
+       sudo ./install.sh --gui-system  optional: one shared GUI service instead
+       ./install.sh [options]          optional: a user install, no root at all
+                                       (your own files only)
        ./install.sh --gui-only         only the GUI, for your login (no sudo)
 
 Installs Backup Suite and its browser GUI, or upgrades an existing install
@@ -284,9 +288,25 @@ install_gui_as() {
         bash "$gui_dir/scripts/backup-suite-gui-server" install
 }
 
+# A GUI admin must be in the broker's group; the socket's ACL lets a running
+# GUI connect at once (a new group membership alone needs a new login).
+grant_broker_access() {
+    local login="$1"
+    getent group backup-suite-gui >/dev/null || return 0
+    if ! id -nG "$login" | tr ' ' '\n' | grep -Fxq backup-suite-gui; then
+        usermod -a -G backup-suite-gui "$login"
+        log "Added $login to backup-suite-gui, so its GUI may use the control broker."
+    fi
+    if [ -x "$SYSTEM_INSTALL_DIR/bin/install-gui-broker.sh" ] && [ -S /run/backup-suite/control.sock ]; then
+        "$SYSTEM_INSTALL_DIR/bin/install-gui-broker.sh" --refresh-acl || true
+    fi
+}
+
 install_gui_system() {
     local login="${GUI_ADMINS[0]}"
     local gui_copy
+
+    grant_broker_access "$login"
 
     # The admin login must be able to read the GUI it copies; the release may
     # sit where only root can read it, so hand it a private copy.

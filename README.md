@@ -26,6 +26,12 @@ cd backup-suite-<version>
 sudo ./install.sh --install-deps
 ```
 
+This is the recommended setup: Backup Suite runs system-wide as root, and the GUI
+runs as your own login (no root), changing Backup Suite only through a small root
+control service with a fixed, audited list of actions. Optional setups (one shared
+GUI for all admins, or a user-only install without root) are in
+[docs/INSTALLATION.md](docs/INSTALLATION.md#setups).
+
 `install.sh` installs Backup Suite and its browser GUI, creates a starting
 configuration (no jobs, no destinations yet) and prints how to connect to the GUI;
 everything else is set up there. The GUI never runs as root (`./install.sh --gui-only`

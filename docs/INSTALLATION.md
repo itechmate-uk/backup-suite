@@ -1,5 +1,24 @@
 # Installation
 
+## Setups
+
+| Setup | Backup Suite | GUI | Install with |
+|---|---|---|---|
+| **Default, recommended** | system-wide, as root | each admin's own user service, as that login | `sudo ./install.sh` |
+| Optional: one shared GUI | system-wide, as root | one system service, run by the unprivileged account `backup-suite-gui` | `sudo ./install.sh --gui-system` |
+| Optional: no root at all | for one login only (its own files) | that login's user service | `./install.sh` |
+
+The GUI never runs as root. With a system-wide Backup Suite, the GUI changes it only
+through the control broker (`/run/backup-suite/control.sock`): root runs a fixed list
+of checked, audited actions for the members of the group `backup-suite-gui`. The GUI
+cannot run anything else as root or read Backup Suite's files.
+
+The default is the recommended setup because every admin has their own GUI and the
+audit log names who made each change. A shared GUI reaches the broker as
+`backup-suite-gui`, so the audit log cannot tell the admins apart. More admins in the
+default setup: `sudo ./install.sh --gui-admin LOGIN --gui-only` installs a GUI for
+that login and adds it to the group.
+
 ## Install from a release (recommended)
 
 Each release on [GitHub](https://github.com/itechmate-uk/backup-suite/releases) has
