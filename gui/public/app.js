@@ -2718,6 +2718,17 @@
     }
   }
 
+  // The version to install: the latest release, checked again just before an update
+  // starts (a release published after the last check is installed instead).
+  async function freshLatestVersion(fallback) {
+    try {
+      const data = await loadUpdates(true);
+      return data?.latest?.ok ? data.latest.latest : fallback;
+    } catch {
+      return fallback;
+    }
+  }
+
   async function startTerminalUpdate(version, { confirm = true } = {}) {
     if (confirm && !(await confirmAction({
       title: `Update Backup Suite to ${version} in a terminal?`,
@@ -2727,6 +2738,7 @@
       ],
       okLabel: "Open terminal"
     }))) return false;
+    version = await freshLatestVersion(version);
     try {
       const data = await api("/api/updates/terminal", { method: "POST", body: { version } });
       showTerminal(`Updating Backup Suite to ${version}`);
@@ -2832,6 +2844,7 @@
           ["The GUI restarts; this page reloads by itself. If the new GUI does not start, the previous one is put back."]];
       if (!(await confirmAction({ title: backend ? `Update Backup Suite to ${version}?` : `Update the GUI to ${version}?`, lines, okLabel: "Update" }))) return false;
     }
+    version = await freshLatestVersion(version);
     try {
       await api("/api/updates/apply", { method: "POST", body: { target, version, stop_running: stopRunning } });
       toast(backend ? `Updating Backup Suite to ${version}…` : `Updating the GUI to ${version}; it restarts in a moment.`, "info", 8000);

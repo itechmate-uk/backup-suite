@@ -318,7 +318,7 @@ def apply_update(version, state_dir, what, stop_running=False):
         raise UpdateError("Not a version: %r" % version)
     lock = locked(state_dir)
     log_path = os.path.join(state_dir, "update-%s-%s.log" % (what, version))
-    status = {"state": "running", "what": what, "version": version, "started_at": now_iso(),
+    status = {"state": "running", "what": what, "version": version, "requested": version, "started_at": now_iso(),
               "step": "download", "log": log_path, "pid": os.getpid()}
     write_status(state_dir, status)
     try:
@@ -326,7 +326,14 @@ def apply_update(version, state_dir, what, stop_running=False):
             log_handle.write("%s Updating %s to %s\n" % (now_iso(), what, version))
             release = latest_release()
             if release["version"] != version:
-                raise UpdateError("The latest release is %s, not %s; check for updates again." % (release["version"], version))
+                if parse_version(release["version"]) < parse_version(version):
+                    raise UpdateError("The latest release is %s, older than %s; check for updates again." % (release["version"], version))
+                # A newer release came out after the check: install that one (only
+                # the latest release is ever installed).
+                log_handle.write("A newer release is out: installing %s instead of %s.\n" % (release["version"], version))
+                status["version"] = release["version"]
+                write_status(state_dir, status)
+                version = release["version"]
             releases_dir = os.path.join(state_dir, "releases")
             archive = download_verified(release, releases_dir)
             log_handle.write("Downloaded and verified %s (SHA-256 matches).\n" % os.path.basename(archive))
@@ -378,7 +385,7 @@ def follow(version, state_dir, wait_seconds=None):
     status = {}
     while time.time() - started < wait_seconds:
         status = read_status(state_dir)
-        if status.get("version") == version and status.get("started_at", "") >= time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(started - 10)):
+        if version in (status.get("requested"), status.get("version")) and status.get("started_at", "") >= time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(started - 10)):
             break
         time.sleep(1)
     else:

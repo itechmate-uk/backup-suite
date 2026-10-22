@@ -1945,8 +1945,14 @@ test_self_update() {
     reply=$(python3 -I "$updater" check --current 9.9.9)
     [ "$(json_field "$reply" 'd["data"]["update_available"]')" = "False" ] || fail_test "same version offered: $reply"
 
-    python3 -I "$updater" apply --version 9.9.8 --state-dir "$test_root/state" > "$test_root/reply.json" && fail_test 'a version other than the latest was installed'
-    assert_contains "$test_root/reply.json" 'not 9.9.8'
+    python3 -I "$updater" apply --version 9.9.10 --state-dir "$test_root/state0" > "$test_root/reply.json" && fail_test 'a version newer than the latest was accepted'
+    assert_contains "$test_root/reply.json" 'older than 9.9.10'
+    # A release published after the check: the latest is installed instead.
+    python3 -I "$updater" apply --version 9.9.8 --state-dir "$test_root/state1" > "$test_root/reply.json" || { cat "$test_root/reply.json" >&2; fail_test 'apply of an older request failed'; }
+    assert_contains "$test_root/state1/update-backup-suite-9.9.8.log" 'installing 9.9.9 instead of 9.9.8'
+    reply=$(python3 -I "$updater" status --state-dir "$test_root/state1")
+    [ "$(json_field "$reply" 'd["data"]["version"]')" = "9.9.9" ] || fail_test "not 9.9.9 after a newer release: $reply"
+    : > "$UPDATE_MARK"
 
     python3 -I "$updater" apply --version 9.9.9 --state-dir "$test_root/state" > "$test_root/reply.json" || { cat "$test_root/reply.json" >&2; fail_test 'apply failed'; }
     assert_contains "$UPDATE_MARK" 'install.sh --no-user-gui'
