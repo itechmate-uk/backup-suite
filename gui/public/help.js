@@ -4,8 +4,9 @@ window.BACKUP_SUITE_HELP = {
   navigation: {
     title: "Backup jobs",
     sections: [
+      ["Overview", "The top group of the panel. Its Home card opens the whole system at a glance."],
       ["Home", "The whole system at a glance: is everything in order, what runs now, server and backup resources, every job's state, database backups and the latest ntfy notifications."],
-      ["Jobs", "One card per backup job (one line of file-sources.conf): a source folder and where it is backed up. The card shows whether it is enabled, its state, its source, its mapping (destination mode, stop file, projects) and when it last ran. Click a card for everything about that job."],
+      ["Jobs", "One card per backup job (one line of file-sources.conf): a source folder and where it is backed up. The card shows whether it is enabled, its state, its source, its mapping (destination mode, stop file, projects) and when it last ran. Click a card for everything about that job. The small buttons on its right back it up now, edit it, enable or disable it, or remove it."],
       ["New job", "Adds a job. The form is checked on the server as you type: the folder must exist and lie under the allowed folders (FILE_JOB_SOURCE_ROOTS, set on the server), and its destination must not overlap another job's."],
       ["Filter", "All jobs, only enabled ones, or only those needing attention (failed, config problem, paused by a stop file, or files that never settle)."],
       ["Admin", "Everything that is not about one job: start and stop, schedule, profiles, watchdog, ntfy, every global setting, all runs, logs and the audit log."]

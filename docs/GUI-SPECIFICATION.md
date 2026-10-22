@@ -610,3 +610,26 @@ production-deploy.sh and setup.sh).
 - The server's build (hash of `public/`) is in `/api/session`, `/api/health` and the
   stream's `hello`; assets are served `no-cache` with an ETag and `?v=<build>`.
 
+## Revision 7 (2026-10-15): excluding changing files, sidebar, full folder picker
+
+- Verb `job.exclude` (`name`, `path`, `folder`, `scope` `job|project`, `project`,
+  `remove`, `pattern`): excludes a changing file or one of its parent folders, up to
+  the project's own folder, in `<config>/jobs/<job>.excludes` (every project of the
+  job) or `<config>/jobs/<job>.projects/<child folder>.excludes` (one project).
+  Glob characters are escaped; a folder becomes `path/**`. Nothing is written into
+  the projects and the remote copy stays. The file is backed up before each change
+  and the change is audited; `job` returns `project_patterns`; renaming or removing
+  a job moves or removes its `.projects` folder. `file-backup.sh` applies both files
+  for each project.
+- A file deferred `FILE_ACTIVE_MAX_DEFERRALS` runs in a row is notified again every
+  that many runs; the Changing files tab says which files never settle and offers
+  **Exclude…** on each row (a button, no context menu, so text stays selectable).
+- Sidebar: an **Overview** group (Home) on top, then **Backup jobs** (+ New job,
+  filter, cards). Job cards carry small Back up, Edit, Enable/Disable and Remove
+  buttons; a job page's action buttons are right-aligned.
+- `fs.browse` browses the whole server (folder names only) from the caller's home;
+  `/proc`, `/sys`, `/dev` and `/run` are not listed. Each folder says whether it can
+  be selected and why not; only folders under `FILE_JOB_SOURCE_ROOTS`, outside
+  system and Backup Suite folders, can be used. The picker has a path box (`~` and
+  relative paths), Home, Up, Refresh and Go. `FILE_JOB_SOURCE_ROOTS` stays
+  server-only.

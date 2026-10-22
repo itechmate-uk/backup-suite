@@ -157,4 +157,8 @@ next run. Each deferral is counted per file in
 `/var/lib/backup-suite/active-files/`. A file deferred for
 `FILE_ACTIVE_MAX_DEFERRALS` runs in a row (default 12) triggers an ntfy
 warning that names it, so a file that never settles is never silently left
-out. Exclude such files with `.backup-excludes`, or stop their writer briefly.
+out. The warning repeats every `FILE_ACTIVE_MAX_DEFERRALS` runs while the file
+keeps changing. Exclude such files with **Exclude…** on the GUI's Changing files
+tab (the file or one of its folders, in one project or in every project of the
+job; kept in `<config>/jobs/`), with `.backup-excludes`, or stop their writer
+briefly.

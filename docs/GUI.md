@@ -7,14 +7,16 @@ the acceptance checks are in [GUI-SPECIFICATION.md](GUI-SPECIFICATION.md).
 
 ## What it shows
 
-- **Left panel: backup jobs.** **+ New job**, a Home card, then one card per job
-  (one line of `file-sources.conf`): enabled, state, source, mapping, last run,
-  changed and changing files. A filter shows all jobs, enabled ones, or those needing
-  attention. **Home** shows the whole system: a verdict, what runs now, live server and
-  backup resources, every job's state, database backups and the latest ntfy
-  notifications.
-- **A job's page:** **Back up now** (this job only), **Edit…**, **Enable/Disable…**,
-  **Remove…**, and eight tabs: Overview, Projects (one per child folder with
+- **Left panel**, in two groups. On top, **Overview** with the **Home** card: the
+  whole system (a verdict, what runs now, live server and backup resources, every
+  job's state, database backups and the latest notifications). Below it, **Backup
+  jobs**: **+ New job**, a filter (all jobs, enabled ones, or those needing
+  attention) and one card per job (one line of `file-sources.conf`): enabled, state,
+  source, mapping, last run, changed and changing files. Each card has small
+  buttons on the right, like agentw-gui's project cards: **Back up**, **Edit**,
+  **Enable/Disable** and **Remove**.
+- **A job's page:** **Back up now** (this job only), **Edit…**, **Enable/Disable…**
+  and **Remove…**, aligned right, and eight tabs: Overview, Projects (one per child folder with
   `children`), Changed files, Changing files, Excludes & stop files, Runs, Log, and
   Source & destination (sizes measured on request).
 - **Files that never settle:** a file skipped `FILE_ACTIVE_MAX_DEFERRALS` runs in a

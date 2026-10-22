@@ -1,6 +1,6 @@
 [Unit]
 Description=Backup Suite GUI (instance __INSTANCE__)
-Documentation=https://github.com/helal00/backup-suite/blob/main/docs/GUI-SPECIFICATION.md
+Documentation=https://github.com/itechmate-uk/backup-suite/blob/main/docs/GUI-SPECIFICATION.md
 Wants=backup-suite-gui-watchdog-__INSTANCE__.service
 StartLimitIntervalSec=600
 StartLimitBurst=5
