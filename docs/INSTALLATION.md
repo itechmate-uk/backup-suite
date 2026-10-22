@@ -1,5 +1,74 @@
 # Installation
 
+## Install from a release (recommended)
+
+Each release on [GitHub](https://github.com/itechmate-uk/backup-suite/releases) has
+`backup-suite-<version>.tar.gz` and its SHA-256 checksum. On the server, as the login
+that will use the GUI:
+
+```bash
+sha256sum -c backup-suite-<version>.tar.gz.sha256
+tar -xzf backup-suite-<version>.tar.gz
+cd backup-suite-<version>
+sudo ./install.sh --install-deps
+```
+
+What `install.sh` does:
+
+- **Mode.** With `sudo`: a system install (scripts in `/opt/backup-suite`, source in
+  `/opt/backup-suite-src`, config in `/etc/backup-suite`, state in
+  `/var/lib/backup-suite`); backups run as root. Without `sudo`: a user install
+  (source in `~/.local/share/backup-suite-src`, config in `~/.config/backup-suite`);
+  backups run as you.
+- **Packages.** It needs rclone, python3, curl, flock, setfacl (system install) and
+  Node.js 18 or newer (for the GUI). `--install-deps` installs what is missing with
+  apt-get or dnf; otherwise it lists them and stops.
+- **First install.** A starting configuration: `global.conf` from the example and
+  empty `file-sources.conf`, `database-backups.conf` and `rclone.conf`; then
+  `setup.sh`, which installs the scripts, the systemd units (timers stay off) and, in
+  a system install, the GUI's control broker.
+- **Upgrade** (Backup Suite already installed). A system install is upgraded with
+  `production-deploy.sh`: it waits for a running backup (`--stop-running` stops it
+  instead), keeps the configuration, credentials and the current resource setup
+  (adaptive or fixed), runs the tests first and rolls back on failure. A user install
+  is refreshed with `setup.sh --refresh-scripts --refresh-units`; its configuration
+  is kept.
+- **GUI.** Installed as a systemd user service of the GUI admin: the user who ran
+  `sudo`, or `--gui-admin LOGIN`. In a system install it turns on linger for that
+  login, so the GUI runs while nobody is logged in. `--no-gui` skips it.
+
+Options: `--gui-admin LOGIN`, `--no-gui`, `--install-deps`, `--profile NAME`,
+`--floor NAME`, `--fixed`, `--stop-running`, `--dry-run` (first install only).
+
+After installing, as the GUI admin:
+
+```bash
+~/.local/share/backup-suite-gui/app/scripts/backup-suite-gui-server status
+```
+
+shows every way to connect (Tunnel Manager profile, launchers, phone, `ssh -L`). In
+the GUI: add a destination (Admin → Destinations), set it as the default (Admin →
+All settings → `RCLONE_REMOTE_ROOT`), add a backup job (+ New job), and switch the
+schedule on (Admin → Actions & schedule). See [GUI.md](GUI.md).
+
+### Making a release
+
+Set the version in `VERSION` and `gui/package.json`, add release notes as
+`docs/releases/v<version>.md`, commit, then tag and push:
+
+```bash
+git tag -a v1.0.0 -m "Backup Suite 1.0.0"
+git push origin v1.0.0
+```
+
+The Release workflow (`.github/workflows/release.yml`) checks the source, runs the GUI
+tests, builds the archive with `git archive` and publishes the release with it.
+
+## Manual setup
+
+The rest of this page describes `setup.sh` itself, for installing from a checkout
+with your own configuration.
+
 ## Directory Layout
 
 Source suite tree:

@@ -14,7 +14,26 @@ The suite is designed to be:
 
 It uses `rclone`, so it can work with any `rclone` backend the user configures, not only Google Drive.
 
-## Quick Start
+## Install
+
+Download the latest release from
+[Releases](https://github.com/itechmate-uk/backup-suite/releases/latest), then on the
+server (Linux with systemd), as the login that will use the GUI:
+
+```bash
+tar -xzf backup-suite-<version>.tar.gz
+cd backup-suite-<version>
+sudo ./install.sh --install-deps
+```
+
+`install.sh` installs Backup Suite and its browser GUI, creates a starting
+configuration (no jobs, no destinations yet) and prints how to connect to the GUI;
+everything else is set up there. Run it again from a newer release to upgrade:
+configuration, credentials and the resource setup are kept. Without `sudo` it
+installs for your login only. Options: `./install.sh --help`; details in
+[docs/INSTALLATION.md](docs/INSTALLATION.md).
+
+## Manual setup (without the installer)
 
 ### 1. Copy the example config files
 
@@ -144,7 +163,9 @@ User mode defaults:
 - `config/` example config files only
 - `systemd/` unit templates
 - `docs/` detailed documentation
-- `setup.sh` installer and refresh entry point
+- `install.sh` installer for a release: installs or upgrades Backup Suite and the GUI
+- `setup.sh` low-level installer and refresh entry point (used by `install.sh`)
+- `gui/` the browser GUI
 - `production-deploy.sh` routine deployment for an installed host (never disables the timer; rolls back on failure)
 
 ## Security Note

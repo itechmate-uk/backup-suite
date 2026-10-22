@@ -404,20 +404,10 @@ run_cmd install -d -m 755 "$STATE_DIR"
 run_cmd install -d -m 755 "$STATE_DIR/locks"
 run_cmd install -d -m 750 "$DB_LOCAL_OUTPUT_DIR"
 
-deploy_file "$READ_SOURCE_DIR/bin/common.sh" "$INSTALL_DIR/bin/common.sh" 755 scripts CONFIRMED_SCRIPTS "installed script"
-deploy_file "$READ_SOURCE_DIR/bin/systemd-fork-run.sh" "$INSTALL_DIR/bin/systemd-fork-run.sh" 755 scripts CONFIRMED_SCRIPTS "installed script"
-deploy_file "$READ_SOURCE_DIR/bin/file-backup-service.sh" "$INSTALL_DIR/bin/file-backup-service.sh" 755 scripts CONFIRMED_SCRIPTS "installed script"
-deploy_file "$READ_SOURCE_DIR/bin/file-backup.sh" "$INSTALL_DIR/bin/file-backup.sh" 755 scripts CONFIRMED_SCRIPTS "installed script"
-deploy_file "$READ_SOURCE_DIR/bin/database-backup.sh" "$INSTALL_DIR/bin/database-backup.sh" 755 scripts CONFIRMED_SCRIPTS "installed script"
-deploy_file "$READ_SOURCE_DIR/bin/database-size-check.sh" "$INSTALL_DIR/bin/database-size-check.sh" 755 scripts CONFIRMED_SCRIPTS "installed script"
-deploy_file "$READ_SOURCE_DIR/bin/notify-failure.sh" "$INSTALL_DIR/bin/notify-failure.sh" 755 scripts CONFIRMED_SCRIPTS "installed script"
-deploy_file "$READ_SOURCE_DIR/bin/notify-lib.sh" "$INSTALL_DIR/bin/notify-lib.sh" 755 scripts CONFIRMED_SCRIPTS "installed script"
-deploy_file "$READ_SOURCE_DIR/bin/notify-test.sh" "$INSTALL_DIR/bin/notify-test.sh" 755 scripts CONFIRMED_SCRIPTS "installed script"
-deploy_file "$READ_SOURCE_DIR/bin/backup-watchdog.sh" "$INSTALL_DIR/bin/backup-watchdog.sh" 755 scripts CONFIRMED_SCRIPTS "installed script"
-deploy_file "$READ_SOURCE_DIR/bin/backup-profile.sh" "$INSTALL_DIR/bin/backup-profile.sh" 755 scripts CONFIRMED_SCRIPTS "installed script"
-deploy_file "$READ_SOURCE_DIR/bin/backup-control.sh" "$INSTALL_DIR/bin/backup-control.sh" 755 scripts CONFIRMED_SCRIPTS "installed script"
-deploy_file "$READ_SOURCE_DIR/bin/backup-control.py" "$INSTALL_DIR/bin/backup-control.py" 755 scripts CONFIRMED_SCRIPTS "installed script"
-deploy_file "$READ_SOURCE_DIR/bin/install-gui-broker.sh" "$INSTALL_DIR/bin/install-gui-broker.sh" 755 scripts CONFIRMED_SCRIPTS "installed script"
+# Every runtime script, including those other scripts call (apply-schedule.sh).
+for script_file in "$READ_SOURCE_DIR"/bin/*.sh "$READ_SOURCE_DIR"/bin/*.py; do
+    deploy_file "$script_file" "$INSTALL_DIR/bin/$(basename "$script_file")" 755 scripts CONFIRMED_SCRIPTS "installed script"
+done
 deploy_file "$READ_SOURCE_DIR/README.md" "$INSTALL_DIR/README.md" 644 scripts CONFIRMED_SCRIPTS "installed documentation"
 
 deploy_symlink "$DEPLOYED_CONFIG_SOURCE_DIR/global.conf" "$CONFIG_DIR/global.conf" config CONFIRMED_CONFIG "runtime config"

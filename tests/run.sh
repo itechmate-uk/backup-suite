@@ -1921,6 +1921,69 @@ test_gui_broker_installer_guards() {
     assert_contains "$test_root/backup-suite-control@.service.template" 'ExecStart=/opt/x/bin/backup-control.sh --peer %i'
 }
 
+test_release_installer() {
+    # install.sh as a user: a fresh install with a starting configuration, then
+    # an upgrade that keeps the configuration. systemd is faked.
+    local test_root home fake_bin config_dir gui_flag="--no-gui"
+    if [ "$(id -u)" -eq 0 ]; then
+        # As root install.sh is a real system install; production-deploy.sh runs
+        # this suite as root, so the test runs only as a normal user.
+        echo "Running as root; skipping the user-mode installer test."
+        return 0
+    fi
+    test_root=$(mktemp -d)
+    home="$test_root/home"
+    fake_bin="$test_root/bin"
+    mkdir -p "$home" "$fake_bin"
+    cat > "$fake_bin/systemctl" <<'FAKE'
+#!/bin/bash
+printf 'systemctl %s\n' "$*" >> "$FAKE_SYSTEMCTL_LOG"
+case "$*" in *is-active*) echo active ;; *show*) echo 1 ;; esac
+exit 0
+FAKE
+    printf '#!/bin/bash\necho no\n' > "$fake_bin/loginctl"
+    chmod 755 "$fake_bin/systemctl" "$fake_bin/loginctl"
+    if command -v node >/dev/null 2>&1 && [ "$(node -e 'process.stdout.write(process.versions.node.split(".")[0])')" -ge 18 ]; then
+        gui_flag=""
+    fi
+    run_installer() {
+        env -u XDG_CONFIG_HOME -u XDG_DATA_HOME -u XDG_STATE_HOME -u XDG_RUNTIME_DIR \
+            HOME="$home" PATH="$fake_bin:$PATH" FAKE_SYSTEMCTL_LOG="$test_root/systemctl.log" \
+            bash "$ROOT_DIR/install.sh" $gui_flag "$@"
+    }
+
+    run_installer --dry-run > "$test_root/dry.log" 2>&1 || { cat "$test_root/dry.log" >&2; fail_test 'install.sh --dry-run failed'; }
+    [ ! -e "$home/.config/backup-suite" ] || fail_test 'a dry run created the config'
+
+    run_installer > "$test_root/install.log" 2>&1 || { tail -20 "$test_root/install.log" >&2; fail_test 'install.sh failed'; }
+    config_dir="$home/.local/share/backup-suite-src/config"
+    assert_symlink_target "$home/.config/backup-suite/global.conf" "$config_dir/global.conf"
+    assert_file "$home/.local/share/backup-suite/bin/apply-schedule.sh"
+    assert_file "$home/.local/share/backup-suite/bin/backup-control.py"
+    assert_file "$home/.config/systemd/user/file-backup.timer"
+    [ -z "$(grep -v '^#' "$config_dir/file-sources.conf")" ] || fail_test 'the starting file-sources.conf has jobs'
+    [ -z "$(grep -v '^#' "$config_dir/rclone.conf")" ] || fail_test 'the starting rclone.conf has remotes'
+    [ "$(stat -c %a "$config_dir/rclone.conf")" = 600 ] || fail_test 'rclone.conf is not 0600'
+    assert_contains "$test_root/install.log" 'First steps in the GUI'
+    if [ -z "$gui_flag" ]; then
+        assert_file "$home/.local/share/backup-suite-gui/app/server.js"
+        assert_file "$home/.config/systemd/user/backup-suite-gui-4337.service"
+    fi
+    printf '{"verb":"jobs","args":{}}\n' | env -u XDG_CONFIG_HOME -u XDG_DATA_HOME -u XDG_STATE_HOME HOME="$home" PATH="$fake_bin:$PATH" \
+        FAKE_SYSTEMCTL_LOG="$test_root/systemctl.log" "$home/.local/share/backup-suite/bin/backup-control.sh" > "$test_root/jobs.json"
+    assert_contains "$test_root/jobs.json" '"jobs":[]'
+
+    echo '1|mine|/home/nobody/x|fixed|x|.nosync|single' >> "$config_dir/file-sources.conf"
+    echo '[mine]' >> "$config_dir/rclone.conf"
+    run_installer > "$test_root/upgrade.log" 2>&1 || { tail -20 "$test_root/upgrade.log" >&2; fail_test 'install.sh upgrade failed'; }
+    assert_contains "$test_root/upgrade.log" 'upgrading it'
+    assert_not_contains "$test_root/upgrade.log" 'First steps in the GUI'
+    assert_contains "$config_dir/file-sources.conf" '1|mine|/home/nobody/x'
+    assert_contains "$config_dir/rclone.conf" '[mine]'
+
+    rm -rf "$test_root"
+}
+
 test_gui_node_suite() {
     # The GUI's own tests (gui/test/*.test.js): guard, bundle, events, control
     # client, server end to end and colour contrast. They need Node >= 18.
@@ -2011,6 +2074,7 @@ run_test 'control script profile verbs match the CLI' test_control_profile_match
 run_test 'control script actions, audit and peer check' test_control_actions_and_peer_check
 run_test 'events file and run progress' test_events_and_progress_files
 run_test 'GUI broker installer guards and templates' test_gui_broker_installer_guards
+run_test 'release installer: fresh user install and upgrade' test_release_installer
 run_test 'GUI server, events, bundle and contrast (node)' test_gui_node_suite
 
 echo "Tests: passed=$PASS_COUNT failed=$FAIL_COUNT"

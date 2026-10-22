@@ -107,6 +107,9 @@ the GUI), root-run programs and paths are read-only, and every change is audited
 
 ## Install
 
+From a release, `sudo ./install.sh` installs Backup Suite, the broker and the GUI in
+one go (see [INSTALLATION.md](INSTALLATION.md)). By hand:
+
 System mode (this server):
 
 ```bash

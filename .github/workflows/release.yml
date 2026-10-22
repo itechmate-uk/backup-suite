@@ -1,0 +1,54 @@
+# Publishes a release when a version tag (v1.2.3) is pushed: checks the source,
+# runs the GUI tests, builds backup-suite-<version>.tar.gz with install.sh at
+# its top, and attaches it with its SHA-256 checksum.
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Version matches the tag
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          test "$(cat VERSION)" = "$version" || { echo "VERSION is $(cat VERSION), tag is $GITHUB_REF_NAME"; exit 1; }
+          test "$(node -p 'require("./gui/package.json").version')" = "$version" || { echo "gui/package.json version differs from $version"; exit 1; }
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Check the source
+        run: |
+          bash -n install.sh setup.sh production-deploy.sh production-file-backup-migrate.sh bin/*.sh tests/run.sh gui/scripts/backup-suite-gui-server gui/scripts/backup-suite-gui-watchdog
+          python3 -c 'import ast, sys; ast.parse(open(sys.argv[1]).read(), sys.argv[1])' bin/backup-control.py
+          (cd gui && node --test test/*.test.js)
+
+      - name: Build the archive
+        run: |
+          name="backup-suite-$VERSION"
+          mkdir -p dist
+          git archive --format=tar --prefix="$name/" HEAD | gzip -9 > "dist/$name.tar.gz"
+          (cd dist && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256")
+          tar -tzf "dist/$name.tar.gz" | grep -qx "$name/install.sh"
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          notes="docs/releases/v$VERSION.md"
+          if [ -f "$notes" ]; then
+            gh release create "$GITHUB_REF_NAME" dist/* --title "Backup Suite $VERSION" --notes-file "$notes"
+          else
+            gh release create "$GITHUB_REF_NAME" dist/* --title "Backup Suite $VERSION" --generate-notes
+          fi

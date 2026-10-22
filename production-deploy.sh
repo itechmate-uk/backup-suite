@@ -30,6 +30,7 @@ BACKUP_DIR=""
 CHECK_ONLY=0
 REQUESTED_PROFILE=""
 REQUESTED_FLOOR=""
+FIXED_REQUESTED=0
 REQUESTED_LIMITS=""
 RUNNING_BACKUP_POLICY="wait"
 WAIT_LIMIT_SECONDS="${BACKUP_SUITE_DEPLOY_WAIT_LIMIT_SECONDS:-14400}"
@@ -57,7 +58,9 @@ Options:
                    adaptive mode: start at --profile and let the watchdog step
                    down to this floor when resources are tight, and back up when
                    they are normal (for example --profile moderate --floor slow)
-  --fixed          keep a single profile (the default unless --floor is given)
+  --fixed          keep a single profile (the default when --profile is given
+                   without --floor). With neither option the current setup is
+                   kept, adaptive or fixed; in a terminal Enter keeps it too.
   --limits fixed|auto
                    built-in limits, or limits scaled to this host's RAM and CPU
   --wait           wait for a running backup to finish before deploying (default)
@@ -162,6 +165,7 @@ while [ "$#" -gt 0 ]; do
             ;;
         --fixed)
             REQUESTED_FLOOR=""
+            FIXED_REQUESTED=1
             ;;
         --limits)
             [ "$#" -ge 2 ] || die "--limits requires fixed or auto"
@@ -224,9 +228,12 @@ required_source_files=(
 for source_file in "${required_source_files[@]}"; do
     [ -f "$source_file" ] || die "Required source file is missing: $source_file"
 done
-for command_name in awk cp find flock git grep install mktemp python3 readlink sed setfacl systemctl systemd-analyze; do
+for command_name in awk cp find flock grep install mktemp python3 readlink sed setfacl systemctl systemd-analyze; do
     command -v "$command_name" >/dev/null 2>&1 || die "Required command not found: $command_name"
 done
+if [ -d "$SOURCE_DIR/.git" ]; then
+    command -v git >/dev/null 2>&1 || die "Required command not found: git"
+fi
 [[ "$WAIT_LIMIT_SECONDS" =~ ^[0-9]+$ ]] || die "BACKUP_SUITE_DEPLOY_WAIT_LIMIT_SECONDS must be an integer"
 
 bash -n "$SOURCE_DIR/setup.sh" "$SOURCE_DIR/production-deploy.sh" "$SOURCE_DIR"/bin/*.sh "$SOURCE_DIR/tests/run.sh" "$SOURCE_DIR/tests/fixtures"/*.sh
@@ -265,6 +272,11 @@ flock -n "$DEPLOY_LOCK_FD" || die "Another Backup Suite deployment is already ru
 
 if [ -z "$REQUESTED_PROFILE" ]; then
     configured_profile=$(bash -c '. "$1"; printf "%s" "${FILE_BACKUP_PROFILE:-}"' _ "$(readlink -f "$GLOBAL_CONFIG")")
+    configured_mode=$(bash -c '. "$1"; printf "%s" "${FILE_BACKUP_PROFILE_MODE:-fixed}"' _ "$(readlink -f "$GLOBAL_CONFIG")")
+    configured_floor=$(bash -c '. "$1"; printf "%s" "${FILE_BACKUP_PROFILE_FLOOR:-}"' _ "$(readlink -f "$GLOBAL_CONFIG")")
+    if [ "$configured_mode" != "adaptive" ]; then
+        configured_floor=""
+    fi
     if [ -t 0 ] && [ -t 1 ]; then
         BACKUP_SUITE_CONFIG_DIR="$CONFIG_DIR" "$SOURCE_DIR/bin/backup-profile.sh" show
         echo ""
@@ -276,11 +288,21 @@ if [ -z "$REQUESTED_PROFILE" ]; then
         slow|moderate|fast|custom) ;;
         *) die "Unknown profile: $REQUESTED_PROFILE" ;;
     esac
-    if [ -t 0 ] && [ -t 1 ] && [ -z "$REQUESTED_FLOOR" ] && [ "$REQUESTED_PROFILE" != "slow" ] && [ "$REQUESTED_PROFILE" != "custom" ]; then
-        read -r -p "Adaptive floor (watchdog steps down to it when resources are tight) [slow/moderate, Enter = fixed $REQUESTED_PROFILE]: " REQUESTED_FLOOR
-        REQUESTED_FLOOR="${REQUESTED_FLOOR,,}"
+    if [ "$FIXED_REQUESTED" -eq 0 ] && [ -z "$REQUESTED_FLOOR" ] && [ "$REQUESTED_PROFILE" != "slow" ] && [ "$REQUESTED_PROFILE" != "custom" ]; then
+        # Enter keeps the current setup: the configured floor while the profile
+        # stays the same, otherwise fixed.
+        default_floor=""
+        if [ "$REQUESTED_PROFILE" = "$configured_profile" ]; then
+            default_floor="$configured_floor"
+        fi
+        if [ -t 0 ] && [ -t 1 ]; then
+            read -r -p "Adaptive floor (watchdog steps down to it when resources are tight) [slow/moderate/fixed, Enter = ${default_floor:-fixed}]: " REQUESTED_FLOOR
+            REQUESTED_FLOOR="${REQUESTED_FLOOR,,}"
+        fi
         case "$REQUESTED_FLOOR" in
-            ""|slow|moderate) ;;
+            "") REQUESTED_FLOOR="$default_floor" ;;
+            fixed) REQUESTED_FLOOR="" ;;
+            slow|moderate) ;;
             *) die "Unknown floor: $REQUESTED_FLOOR" ;;
         esac
     fi
