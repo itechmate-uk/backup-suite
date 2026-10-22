@@ -279,10 +279,24 @@ def read_status(state_dir):
     return status
 
 
+def installer_env():
+    """A login-like environment for the installer: a systemd unit (the update runs
+    in one) has no HOME, USER or LOGNAME, and the installers expect them."""
+    import pwd
+    env = dict(os.environ)
+    entry = pwd.getpwuid(os.getuid())
+    env.setdefault("HOME", entry.pw_dir)
+    env.setdefault("USER", entry.pw_name)
+    env.setdefault("LOGNAME", entry.pw_name)
+    env.setdefault("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
+    return env
+
+
 def run_logged(command, log_handle, env=None):
     log_handle.write("$ %s\n" % " ".join(command))
     log_handle.flush()
-    process = subprocess.run(command, stdout=log_handle, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, env=env)
+    process = subprocess.run(command, stdout=log_handle, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                             env=env if env is not None else installer_env())
     return process.returncode
 
 

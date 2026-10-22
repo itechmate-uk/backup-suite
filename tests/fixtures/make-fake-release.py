@@ -12,7 +12,8 @@ tag = "v" + version
 os.makedirs(os.path.join(root, tag), exist_ok=True)
 files = {
     top + "/VERSION": version + "\n",
-    top + "/install.sh": '#!/bin/bash\nprintf "install.sh %s\\n" "$*" >> "$UPDATE_MARK"\n',
+    # Like the real installer: needs HOME (a systemd unit has none) under set -u.
+    top + "/install.sh": '#!/bin/bash\nset -u\nprintf "install.sh %s home=%s\\n" "$*" "$HOME" >> "$UPDATE_MARK"\n',
     top + "/gui/scripts/backup-suite-gui-server": '#!/bin/bash\nprintf "gui-server %s\\n" "$*" >> "$UPDATE_MARK"\n',
 }
 if evil:

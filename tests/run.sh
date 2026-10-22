@@ -1954,8 +1954,9 @@ test_self_update() {
     [ "$(json_field "$reply" 'd["data"]["version"]')" = "9.9.9" ] || fail_test "not 9.9.9 after a newer release: $reply"
     : > "$UPDATE_MARK"
 
-    python3 -I "$updater" apply --version 9.9.9 --state-dir "$test_root/state" > "$test_root/reply.json" || { cat "$test_root/reply.json" >&2; fail_test 'apply failed'; }
-    assert_contains "$UPDATE_MARK" 'install.sh --no-user-gui'
+    # As in backup-suite-update.service: no HOME in the environment.
+    env -u HOME python3 -I "$updater" apply --version 9.9.9 --state-dir "$test_root/state" > "$test_root/reply.json" || { cat "$test_root/reply.json" >&2; cat "$test_root/state/update-backup-suite-9.9.9.log" >&2; fail_test 'apply failed'; }
+    assert_contains "$UPDATE_MARK" 'install.sh --no-user-gui home=/'
     reply=$(python3 -I "$updater" status --state-dir "$test_root/state")
     [ "$(json_field "$reply" 'd["data"]["state"]')" = "done" ] || fail_test "status not done: $reply"
     assert_contains "$test_root/state/update-backup-suite-9.9.9.log" 'SHA-256 matches'

@@ -20,6 +20,12 @@
 
 set -euo pipefail
 
+# A service (the GUI's update, as root) may start this without HOME.
+if [ -z "${HOME:-}" ]; then
+    HOME=$(getent passwd "$(id -u)" | cut -d: -f6)
+    export HOME
+fi
+
 SOURCE_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 VERSION=$(cat "$SOURCE_DIR/VERSION" 2>/dev/null || echo unknown)
 SYSTEM_INSTALL_DIR="/opt/backup-suite"
