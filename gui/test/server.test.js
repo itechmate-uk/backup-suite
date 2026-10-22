@@ -202,3 +202,69 @@ test("updates: the latest release, both versions, and this GUI's update in its o
     server.close();
   }
 });
+
+test("update terminal: in its own unit with a pty; sudo asks there; typed input reaches it unechoed", async () => {
+  const fixture = makeFixture();
+  const log = path.join(fixture.root, "terminal.log");
+  // systemd-run: record each call; the terminal's (--pty) runs what follows "--",
+  // the update unit's only returns (nothing real is started).
+  const fakeRun = path.join(fixture.root, "fake-systemd-run");
+  fs.writeFileSync(fakeRun, `#!/bin/bash\nprintf 'systemd-run %s\\n' "$*" >> "${log}"\ncase " $* " in *" --pty "*) ;; *) exit 0 ;; esac\nwhile [ "$#" -gt 0 ] && [ "$1" != "--" ]; do shift; done\nshift\nexec "$@"\n`, { mode: 0o755 });
+  // sudo: asks for a password on the terminal without echo, then reports instead of running.
+  const fakeSudo = path.join(fixture.root, "fake-sudo");
+  fs.writeFileSync(fakeSudo, `#!/bin/bash\nprintf '[sudo] password: '\nstty -echo 2>/dev/null; read -r password; stty echo 2>/dev/null\necho\n[ "$password" = "right" ] && echo "authorized \${#password}" || echo "Sorry, try again."\nprintf 'sudo %s\\n' "$*" >> "${log}"\n`, { mode: 0o755 });
+  const env = { ...fixture.env, BACKUP_SUITE_SYSTEMD_RUN: fakeRun, BACKUP_SUITE_GUI_SUDO: fakeSudo, BACKUP_SUITE_UPDATE_FOLLOW_WAIT: "1" };
+  const { createApp } = require("../server");
+  const app = createApp({ env });
+  const server = http.createServer(app.handle);
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = server.address().port;
+  const readAll = async (id, until) => {
+    let output = "";
+    let offset = 0;
+    let task = null;
+    for (let i = 0; i < 80; i += 1) {
+      const polled = await request(port, "GET", `/api/terminal?id=${id}&offset=${offset}`);
+      task = polled.json.task;
+      output += task.output;
+      offset = task.offset;
+      if (until(output, task)) break;
+      await wait(100);
+    }
+    return { output, task };
+  };
+  try {
+    const session = await request(port, "GET", "/api/session");
+    const headers = { "Content-Type": "application/json", "X-CSRF-Token": session.json.csrf, Origin: `http://127.0.0.1:${port}` };
+    assert.strictEqual((await request(port, "POST", "/api/updates/terminal", { headers, body: { version: "x;rm" } })).status, 400);
+
+    // User mode (this fixture): no sudo; the update unit is a user unit.
+    const started = await request(port, "POST", "/api/updates/terminal", { headers, body: { version: "9.9.9" } });
+    assert.strictEqual(started.status, 202, started.text);
+    assert.strictEqual((await request(port, "POST", "/api/updates/terminal", { headers, body: { version: "9.9.9" } })).status, 409);
+    const userRun = await readAll(started.json.task.id, (output, task) => task.done);
+    assert.strictEqual(userRun.task.done, true);
+    assert.match(userRun.output, /did not start/);
+    let calls = fs.readFileSync(log, "utf8");
+    assert.match(calls, /systemd-run --user --pty --quiet --wait --collect --unit backup-suite-gui-terminal/);
+    assert.match(calls, /systemd-run --user --unit backup-suite-update --collect --quiet .* apply --version 9\.9\.9/);
+    assert.doesNotMatch(calls, /^sudo /m);
+
+    // System mode: sudo asks in the terminal; the typed line is not echoed.
+    const command = app.updates.terminalBackendCommand("9.9.9", "system");
+    const task = app.terminals.start(command, { label: "system update test" });
+    const prompt = await readAll(task.id, (output) => /password:/.test(output));
+    assert.match(prompt.output, /\[sudo\] password:/);
+    assert.strictEqual((await request(port, "POST", "/api/terminal/input", { headers, body: { id: task.id, text: "two\nlines" } })).status, 400);
+    assert.strictEqual((await request(port, "POST", "/api/terminal/input", { body: { id: task.id, text: "right" } })).status, 403);
+    assert.strictEqual((await request(port, "POST", "/api/terminal/input", { headers, body: { id: task.id, text: "right" } })).status, 200);
+    const done = await readAll(task.id, (output, current) => current.done);
+    const output = prompt.output + done.output;
+    assert.match(output, /authorized 5/);
+    assert.doesNotMatch(output, /right/, "the typed password must not be echoed");
+    calls = fs.readFileSync(log, "utf8");
+    assert.match(calls, /^sudo -- sh -c set -e; install -m 755 .*backup-suite-update\.py'? \/run\/backup-suite-update\.py; .*--unit backup-suite-update .* apply --version 9\.9\.9; .*follow --version 9\.9\.9/m);
+  } finally {
+    server.close();
+  }
+});

@@ -67,7 +67,10 @@ the acceptance checks are in [GUI-SPECIFICATION.md](GUI-SPECIFICATION.md).
   running backup is waited for (or stopped, if chosen), the tests run, and a failure
   keeps the previous version. **The GUI** of a login updates itself as that login
   (`backup-suite-gui-update.service`, no sudo) and restarts; if it does not come up,
-  the previous copy is put back. A system-wide GUI is updated with Backup Suite. The
+  the previous copy is put back. A system-wide GUI is updated with Backup Suite. A
+  Backup Suite older than 1.1 (before the update service) is updated once in a
+  terminal inside the Updates window, as in agentw-gui: sudo asks for your password
+  there, the GUI passes what you type to the terminal and keeps nothing. The
   GUI checks for releases every 6 hours (Settings → General → Updates; it only
   checks, nothing installs without a confirmation).
 - ⚙ holds this GUI's own settings only.

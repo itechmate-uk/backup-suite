@@ -146,4 +146,32 @@ class Updates {
   }
 }
 
+// The command for the GUI's terminal that updates a Backup Suite which cannot update
+// itself yet (before 1.1: no update verb). In a system install sudo asks for the
+// password in that terminal, like agentw-gui's operations; the update then runs in
+// its own unit (as root), and the terminal shows its log until it ends.
+Updates.prototype.terminalBackendCommand = function terminalBackendCommand(version, mode) {
+  if (!parseVersion(version)) throw Object.assign(new Error("version must look like 1.2.3."), { code: "invalid_request" });
+  if (!this.available()) throw Object.assign(new Error("This GUI has no updater; install it once more from a release."), { code: "unavailable" });
+  const quote = (value) => `'${String(value).replace(/'/g, "'\\''")}'`;
+  const python = fs.existsSync("/usr/bin/python3") ? "/usr/bin/python3" : "python3";
+  const system = mode !== "user";
+  const updater = system ? "/run/backup-suite-update.py" : this.script;
+  const steps = [
+    "set -e",
+    // As root, run a root-owned copy of this GUI's updater, not the one in a home folder.
+    system ? `install -m 755 ${quote(this.script)} ${updater}` : "",
+    `${this.env.BACKUP_SUITE_SYSTEMCTL || "systemctl"} ${system ? "" : "--user "}reset-failed backup-suite-update.service >/dev/null 2>&1 || true`,
+    `${this.systemdRun} ${system ? "" : "--user "}--unit backup-suite-update --collect --quiet --description ${quote(`Backup Suite update to ${version}`)} -- ${python} -I ${updater} apply --version ${version}`,
+    "echo 'Started backup-suite-update.service; its log follows. Closing this window does not stop it.'",
+    `exec ${python} -I ${updater} follow --version ${version}`
+  ].filter(Boolean).join("; ");
+  const shell = system
+    ? `echo 'sudo asks for your password: type it in the input box below and press Send.'; ${this.env.BACKUP_SUITE_GUI_SUDO || "sudo"} -- sh -c ${quote(steps)}`
+    : `sh -c ${quote(steps)}`;
+  // The GUI's own unit has NoNewPrivileges (sudo cannot work there) and small
+  // limits: run the terminal's command in a transient user unit with its own pty.
+  return `${this.systemdRun} --user --pty --quiet --wait --collect --unit backup-suite-gui-terminal --description ${quote("Backup Suite update terminal")} -- sh -c ${quote(shell)}`;
+};
+
 module.exports = { Updates, isNewer, parseVersion };

@@ -19,6 +19,7 @@ const { Live } = require("./lib/live");
 const bundle = require("./lib/bundle");
 const guard = require("./lib/http-guard");
 const { Updates, isNewer } = require("./lib/updates");
+const { TerminalTasks } = require("./lib/terminal");
 
 const ROOT = __dirname;
 const PUBLIC_DIR = path.join(ROOT, "public");
@@ -69,6 +70,7 @@ function createApp({ env = process.env } = {}) {
   const events = new EventStore({ client, stateDir, getSettings: () => settings, log });
   const live = new Live({ client, events, getSettings: () => settings, log, build: BUILD, idleStopMs: Number(env.BACKUP_SUITE_GUI_STREAM_GRACE_MS) || undefined });
   const updates = new Updates({ appDir: ROOT, version: VERSION, stateDir, env, systemGui: SYSTEM_GUI });
+  const terminals = new TerminalTasks({ env, log });
   let listen = listenConfig.resolveListen({ env, settings });
 
   function sendJson(res, status, body) {
@@ -286,6 +288,35 @@ function createApp({ env = process.env } = {}) {
       }
     }
 
+    // A Backup Suite without the update verb is updated in a terminal (sudo asks there).
+    if (req.method === "POST" && pathname === "/api/updates/terminal") {
+      const body = await readBody(req);
+      try {
+        const command = updates.terminalBackendCommand(String(body.version || ""), client.mode().mode);
+        return sendJson(res, 202, { ok: true, task: terminals.start(command, { label: "Backup Suite update" }) });
+      } catch (error) {
+        return sendError(res, error.code === "invalid_request" ? 400 : error.code === "busy" ? 409 : 502, error.code || "error", error.message);
+      }
+    }
+
+    if (req.method === "GET" && pathname === "/api/terminal") {
+      try {
+        return sendJson(res, 200, { ok: true, task: terminals.get(url.searchParams.get("id"), Number(url.searchParams.get("offset") || 0)) });
+      } catch (error) {
+        return sendError(res, 404, error.code || "not_found", error.message);
+      }
+    }
+
+    if (req.method === "POST" && (pathname === "/api/terminal/input" || pathname === "/api/terminal/stop")) {
+      const body = await readBody(req);
+      try {
+        const data = pathname.endsWith("/input") ? terminals.input(body.id, body.text) : terminals.stop(body.id);
+        return sendJson(res, 200, { ok: true, ...data });
+      } catch (error) {
+        return sendError(res, error.code === "not_found" ? 404 : 400, error.code || "error", error.message);
+      }
+    }
+
     if (req.method === "GET" && pathname === "/api/settings") {
       return sendJson(res, 200, { ok: true, settings, listen: listenReport(), categories: settingsStore.CATEGORY_LABELS });
     }
@@ -408,7 +439,7 @@ function createApp({ env = process.env } = {}) {
     setInterval(autoCheck, 6 * 60 * 60 * 1000).unref?.();
   }
 
-  return { handle, client, events, live, updates, settings: () => settings, listen: () => listen, setListen: (value) => { listen = value; }, csrfToken };
+  return { handle, client, events, live, updates, terminals, settings: () => settings, listen: () => listen, setListen: (value) => { listen = value; }, csrfToken };
 }
 
 async function start() {

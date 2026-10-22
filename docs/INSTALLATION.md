@@ -85,6 +85,10 @@ first, then the GUI, from this project's GitHub releases:
   new GUI does not start, the previous copy (`~/.local/share/backup-suite-gui/app.previous`)
   is put back. By hand: `~/.local/share/backup-suite-gui/app/scripts/backup-suite-gui-server rollback`.
 
+- A Backup Suite older than 1.1 has no update service yet: the Updates window updates
+  it in a terminal, where sudo asks for your password (typed into the window's input
+  box and passed to the terminal, never kept).
+
 Running `install.sh` from a newer release still works as well.
 
 After installing, as the GUI admin:

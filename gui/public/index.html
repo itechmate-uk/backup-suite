@@ -299,6 +299,20 @@
       </div>
     </div>
     <section class="update-body" id="update-body" aria-live="polite"></section>
+    <section class="update-terminal" id="update-terminal" aria-label="Update terminal" hidden>
+      <div class="toolbar-row tight">
+        <strong id="update-terminal-title">Terminal</strong>
+        <span id="update-terminal-state" class="muted" role="status"></span>
+        <button type="button" id="update-terminal-stop" class="danger-button">Stop</button>
+      </div>
+      <pre class="terminal-output" id="update-terminal-output" tabindex="0"></pre>
+      <form class="terminal-input" id="update-terminal-form" autocomplete="off">
+        <input id="update-terminal-input" type="password" autocomplete="off" spellcheck="false" placeholder="Type sudo password or other input, then Send Input" aria-label="Input for the terminal">
+        <label class="inline-check"><input id="update-terminal-hide" type="checkbox" checked><span>Hide what I type</span></label>
+        <button type="submit" id="update-terminal-send">Send Input</button>
+      </form>
+      <p class="muted">Like agentw-gui's operations: what you type goes to the command's terminal as typed; sudo reads its password there without showing it. The GUI does not keep it.</p>
+    </section>
   </dialog>
 
   <dialog id="admin-dialog" class="dialog admin-dialog" aria-labelledby="admin-title">

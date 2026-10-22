@@ -665,5 +665,13 @@ production-deploy.sh and setup.sh).
 - **Update everything**: Backup Suite first (control verb `update.apply`), then, when
   it finished, this GUI; the page reloads when `/api/health` reports the new version.
   A failed Backup Suite update stops before the GUI.
-- A Backup Suite older than 1.1 (no `update.*` verbs) shows the commands for its one
-  manual update, with Copy. The GUI never asks for or handles a sudo password.
+- A Backup Suite older than 1.1 (no `update.*` verbs) is updated in a terminal in
+  the Updates window, like agentw-gui's operations: `POST /api/updates/terminal`
+  starts `systemd-run --user --pty --wait` (the GUI unit has NoNewPrivileges, so sudo
+  cannot run inside it) under `script`; there `sudo` installs a root-owned copy of the
+  updater in `/run`, starts `backup-suite-update.service` and follows its log
+  (`backup-suite-update.py follow`). `GET /api/terminal` polls the output,
+  `POST /api/terminal/input` writes one typed line to the terminal (sudo reads its
+  password there with echo off; the GUI neither logs nor keeps it),
+  `POST /api/terminal/stop` stops the terminal (the update unit keeps running). The
+  commands to run by hand are still shown.

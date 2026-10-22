@@ -13,6 +13,8 @@ top-level folder.
         system install and a system-wide GUI; as a user: the user install)
     backup-suite-update.py gui-apply --version VERSION [--state-dir DIR]
         updates this login's GUI: runs the release's backup-suite-gui-server install
+    backup-suite-update.py follow --version VERSION [--state-dir DIR]
+        prints that update's log as it grows, until it ends
     backup-suite-update.py status [--state-dir DIR]
 
 Without --state-dir: /var/lib/backup-suite/updates as root, else
@@ -363,6 +365,45 @@ def apply_update(version, state_dir, what, stop_running=False):
     return status
 
 
+def follow(version, state_dir, wait_seconds=None):
+    """Prints the log of the update to `version` as it grows, until it ends.
+
+    Used in the GUI's terminal after starting the update unit with sudo; exits 0
+    when the update finished, 1 when it failed or never started.
+    """
+    if wait_seconds is None:
+        wait_seconds = int(os.environ.get("BACKUP_SUITE_UPDATE_FOLLOW_WAIT", "60"))
+    started = time.time()
+    log_path = os.path.join(state_dir, "update-backup-suite-%s.log" % version)
+    status = {}
+    while time.time() - started < wait_seconds:
+        status = read_status(state_dir)
+        if status.get("version") == version and status.get("started_at", "") >= time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(started - 10)):
+            break
+        time.sleep(1)
+    else:
+        print("The update did not start; see: journalctl -u backup-suite-update.service", flush=True)
+        return {"state": "failed", "version": version, "error": "did not start"}
+    offset = 0
+    while True:
+        try:
+            with open(log_path, "rb") as handle:
+                handle.seek(offset)
+                chunk = handle.read()
+                offset += len(chunk)
+            if chunk:
+                sys.stdout.write(chunk.decode("utf-8", "replace"))
+                sys.stdout.flush()
+        except OSError:
+            pass
+        status = read_status(state_dir)
+        if status.get("state") != "running":
+            break
+        time.sleep(1)
+    status.pop("log_tail", None)
+    return status
+
+
 def default_state_dir():
     """Backup Suite's own update folder: the system one as root, else the user's."""
     if os.getuid() == 0:
@@ -382,6 +423,9 @@ def main():
         apply_parser.add_argument("--state-dir", default="")
         if name == "apply":
             apply_parser.add_argument("--stop-running", action="store_true")
+    follow_parser = sub.add_parser("follow")
+    follow_parser.add_argument("--version", required=True)
+    follow_parser.add_argument("--state-dir", default="")
     status_parser = sub.add_parser("status")
     status_parser.add_argument("--state-dir", default="")
     args = parser.parse_args()
@@ -395,6 +439,11 @@ def main():
             result = apply_update(args.version, args.state_dir, "backup-suite", args.stop_running)
         elif args.command == "gui-apply":
             result = apply_update(args.version, args.state_dir, "gui")
+        elif args.command == "follow":
+            result = follow(args.version, args.state_dir)
+            print("")
+            print(json.dumps({"ok": result.get("state") == "done", "data": result}))
+            return 0 if result.get("state") == "done" else 1
         else:
             result = read_status(args.state_dir)
         print(json.dumps({"ok": True, "data": result}))

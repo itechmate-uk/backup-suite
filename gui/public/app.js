@@ -2573,7 +2573,8 @@
   }
 
   function updatesRunning(data) {
-    return data?.backend?.status?.state === "running" || data?.gui?.status?.state === "running" || Boolean(state.updateAll);
+    return data?.backend?.status?.state === "running" || data?.gui?.status?.state === "running" || Boolean(state.updateAll)
+      || Boolean(terminalTask && !terminalTask.done);
   }
 
   function updatesAvailable(data) {
@@ -2639,9 +2640,122 @@
       }
     } }, "Copy");
     return h("div", { class: "notice info" },
-      h("p", {}, `Backup Suite on this server is older than 1.1, which brought updates from the GUI, so it needs this one update by hand. Run these commands on the server${system ? " (sudo asks for your password)" : ""}; afterwards Backup Suite updates from here, without a password:`),
-      h("div", { class: "update-command" }, h("code", {}, command), copy),
-      h("p", { class: "muted" }, "They download the release, check its SHA-256 and run its installer, which keeps your configuration, waits for a running backup, runs the tests and rolls back on failure."));
+      h("p", {}, `Backup Suite on this server is older than 1.1, so its control service cannot install updates yet. Update it once in a terminal here${system ? ": sudo asks for your password there" : ""}. Afterwards Backup Suite updates from this window without a password.`),
+      h("div", { class: "toolbar-row tight" },
+        h("button", { type: "button", class: "primary-button", disabled: Boolean(terminalTask && !terminalTask.done), onclick: () => startTerminalUpdate(version) }, `Update Backup Suite to ${version} in a terminal…`)),
+      h("details", {}, h("summary", {}, "Or run these commands on the server yourself"),
+        h("div", { class: "update-command" }, h("code", {}, command), copy),
+        h("p", { class: "muted" }, "They download the release, check its SHA-256 and run its installer, which keeps your configuration, waits for a running backup, runs the tests and rolls back on failure.")));
+  }
+
+  // ---- the update terminal (like agentw-gui's operation output and Send Input)
+
+  let terminalTask = null;
+  let terminalTimer = null;
+
+  function terminalText(text) {
+    // The pty sends \r\n and may send colour codes; show plain text.
+    return String(text || "").replace(/\u001b\[[0-9;?]*[A-Za-z]/g, "").replace(/\r\n?/g, "\n");
+  }
+
+  function showTerminal(title) {
+    $("#update-terminal").hidden = false;
+    $("#update-terminal-title").textContent = title;
+    clear($("#update-terminal-output"));
+    $("#update-terminal-input").value = "";
+    $("#update-terminal-input").disabled = false;
+    $("#update-terminal-send").disabled = false;
+    $("#update-terminal-stop").disabled = false;
+  }
+
+  function renderTerminal(task, appended) {
+    const output = $("#update-terminal-output");
+    if (appended) {
+      const nearBottom = output.scrollHeight - output.scrollTop - output.clientHeight < 40;
+      output.append(document.createTextNode(terminalText(appended)));
+      if (nearBottom) output.scrollTop = output.scrollHeight;
+    }
+    $("#update-terminal-state").textContent = task.done ? (task.code === 0 ? "finished" : `stopped (exit code ${task.code})`) : "running";
+    if (task.done) {
+      $("#update-terminal-input").disabled = true;
+      $("#update-terminal-send").disabled = true;
+      $("#update-terminal-stop").disabled = true;
+    }
+  }
+
+  async function pollTerminal() {
+    clearTimeout(terminalTimer);
+    if (!terminalTask) return;
+    try {
+      const data = await api(`/api/terminal?id=${encodeURIComponent(terminalTask.id)}&offset=${terminalTask.offset}`);
+      const task = data.task;
+      terminalTask = { ...task };
+      renderTerminal(task, task.output);
+      if (task.done) {
+        await terminalFinished(task);
+        return;
+      }
+    } catch (error) {
+      $("#update-terminal-state").textContent = errorText(error);
+    }
+    terminalTimer = setTimeout(pollTerminal, 700);
+  }
+
+  async function terminalFinished(task) {
+    await loadUpdates(true).catch(() => {});
+    if (task.code === 0) {
+      toast("Backup Suite is updated.", "info", 8000);
+      if (state.updateAll) {
+        await continueUpdateAll();
+        pollUpdatesWhileRunning();
+      }
+    } else {
+      if (state.updateAll) {
+        state.updateAll = null;
+        renderUpdateButton();
+      }
+      toast("The Backup Suite update did not finish; the terminal shows why. The previous version stays in use.", "error", 12000);
+    }
+  }
+
+  async function startTerminalUpdate(version, { confirm = true } = {}) {
+    if (confirm && !(await confirmAction({
+      title: `Update Backup Suite to ${version} in a terminal?`,
+      lines: [
+        "Opens a terminal below that starts the update as root with sudo; sudo asks for your password there (type it in the input box). The update downloads the release, checks its SHA-256, waits for a running backup, runs the tests and rolls back on failure; your configuration is kept.",
+        "Closing the window does not stop the update."
+      ],
+      okLabel: "Open terminal"
+    }))) return false;
+    try {
+      const data = await api("/api/updates/terminal", { method: "POST", body: { version } });
+      showTerminal(`Updating Backup Suite to ${version}`);
+      terminalTask = { ...data.task };
+      renderTerminal(data.task, data.task.output);
+      $("#update-terminal-input").focus();
+      renderUpdateDialog();
+      pollTerminal();
+      return true;
+    } catch (error) {
+      state.updateAll = null;
+      renderUpdateButton();
+      toast(errorText(error), "error", 12000);
+      return false;
+    }
+  }
+
+  async function sendTerminalInput(event) {
+    event.preventDefault();
+    if (!terminalTask || terminalTask.done) return;
+    const input = $("#update-terminal-input");
+    const text = input.value;
+    input.value = "";
+    try {
+      await api("/api/terminal/input", { method: "POST", body: { id: terminalTask.id, text } });
+    } catch (error) {
+      toast(errorText(error), "error");
+    }
+    input.focus();
   }
 
   let updatePollTimer = null;
@@ -2663,7 +2777,7 @@
   async function continueUpdateAll() {
     const plan = state.updateAll;
     const data = state.updates;
-    if (!plan || !data || data.backend?.status?.state === "running") return;
+    if (!plan || !data || data.backend?.status?.state === "running" || (terminalTask && !terminalTask.done)) return;
     if (plan.step === "backend") {
       if (data.backend?.status?.state === "failed") {
         state.updateAll = null;
@@ -2736,10 +2850,16 @@
   async function updateEverything(version, stopRunning) {
     const data = state.updates;
     const steps = [];
+    const terminal = backendNeedsManualUpdate(data);
+    if (terminal) steps.push(`Backup Suite → ${version} in a terminal below: sudo asks for your password there. Configuration is kept; a running backup is waited for; the tests run first and a failure keeps the previous version.`);
     if (data.backend?.update_available) steps.push(`Backup Suite ${data.backend.installed} → ${version}${data.backend.mode === "system" ? " (as root, through the control service)" : ""}: configuration, credentials, jobs and resource setup are kept; ${stopRunning ? "a running backup is stopped" : "a running backup is waited for"}; the tests run first and a failure keeps the previous version.`);
     if (data.gui?.update_available) steps.push(`Then this GUI ${data.gui.version} → ${version}, for your login: it restarts and this page reloads; if it does not start, the previous GUI is put back.`);
     if (!(await confirmAction({ title: `Update everything to ${version}?`, lines: ["Downloads the release from GitHub and checks it against its published SHA-256 before anything is installed.", steps], okLabel: "Update everything" }))) return;
-    if (data.backend?.update_available) {
+    if (terminal) {
+      state.updateAll = { version, step: "backend" };
+      renderUpdateButton();
+      await startTerminalUpdate(version, { confirm: false });
+    } else if (data.backend?.update_available) {
       state.updateAll = { version, step: "backend" };
       renderUpdateButton();
       await startUpdate("backend", version, stopRunning, { confirm: false });
@@ -2780,11 +2900,12 @@
       }
     } }, "Check now");
     const stopRunning = h("input", { type: "checkbox" });
-    const everything = (backend.update_available || gui.update_available) && !running
+    const manual = backendNeedsManualUpdate(data);
+    const everything = (backend.update_available || gui.update_available || manual) && !running
       ? h("div", { class: "toolbar-row tight end" },
         backend.update_available ? h("label", { class: "inline-check" }, stopRunning, h("span", {}, "Stop a running backup instead of waiting")) : null,
         h("button", { type: "button", class: "primary-button", onclick: () => updateEverything(latestVersion, stopRunning.checked) },
-          backend.update_available && gui.update_available ? `Update everything to ${latestVersion}…` : backend.update_available ? `Update Backup Suite to ${latestVersion}…` : `Update the GUI to ${latestVersion}…`))
+          (backend.update_available || manual) && gui.update_available ? `Update everything to ${latestVersion}…` : (backend.update_available || manual) ? `Update Backup Suite to ${latestVersion}…` : `Update the GUI to ${latestVersion}…`))
       : null;
 
     const backendCard = h("section", { class: "card" },
@@ -3371,6 +3492,18 @@
     $("#reload-button").addEventListener("click", () => location.reload());
     $("#update-button").addEventListener("click", openUpdates);
     $("#update-close").addEventListener("click", () => $("#update-dialog").close());
+    $("#update-terminal-form").addEventListener("submit", sendTerminalInput);
+    $("#update-terminal-hide").addEventListener("change", (event) => {
+      $("#update-terminal-input").type = event.target.checked ? "password" : "text";
+    });
+    $("#update-terminal-stop").addEventListener("click", async () => {
+      if (!terminalTask || terminalTask.done) return;
+      try {
+        await api("/api/terminal/stop", { method: "POST", body: { id: terminalTask.id } });
+      } catch (error) {
+        toast(errorText(error), "error");
+      }
+    });
     $("#settings-button").addEventListener("click", openSettings);
     $("#connect-button").addEventListener("click", openConnect);
     $("#reset-panels-button").addEventListener("click", () => {

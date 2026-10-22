@@ -270,6 +270,17 @@ async function main() {
         if (!(await page.$('#update-body button:has-text("Only Backup Suite")'))) failures.push(`${label}/${scheme}: no Backup Suite update button`);
         if (!(await page.$('#update-body button:has-text("Only the GUI")'))) failures.push(`${label}/${scheme}: no GUI update button`);
         await page.screenshot({ path: path.join(screenshotDir, `${label}-${scheme}-updates.png`), fullPage: true });
+        // The update terminal (shown for a Backup Suite older than 1.1): its layout.
+        await page.evaluate(() => {
+          document.querySelector("#update-terminal").hidden = false;
+          document.querySelector("#update-terminal-output").textContent = "sudo asks for your password: type it in the input box below and press Send.\n[sudo] password for user: \nStarted backup-suite-update.service; its log follows.\n";
+        });
+        const overflow = await page.evaluate(() => {
+          const dialog = document.querySelector("#update-dialog");
+          return dialog.scrollWidth > dialog.clientWidth + 1;
+        });
+        if (overflow) failures.push(`${label}/${scheme}: the update window scrolls sideways with the terminal`);
+        await page.screenshot({ path: path.join(screenshotDir, `${label}-${scheme}-update-terminal.png`) });
         await page.keyboard.press("Escape");
         // Dialogs.
         await page.goto(`${base}/#home`);
