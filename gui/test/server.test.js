@@ -155,3 +155,50 @@ test("the GUI never reads Backup Suite files directly (all access goes through t
   const client = fs.readFileSync(path.join(__dirname, "..", "lib", "control-client.js"), "utf8");
   assert.doesNotMatch(client, /readFileSync|createReadStream|readFile\(/);
 });
+
+test("updates: the latest release, both versions, and this GUI's update in its own unit", async () => {
+  const { execFileSync } = require("child_process");
+  const fixture = makeFixture();
+  const release = path.join(fixture.root, "release");
+  // The same fake release the shell suite uses: file:// URLs, a real archive and checksum.
+  execFileSync("python3", [path.join(__dirname, "..", "..", "tests", "fixtures", "make-fake-release.py"), release, "9.9.9"]);
+  const runLog = path.join(fixture.root, "systemd-run.log");
+  const fakeRun = path.join(fixture.root, "fake-systemd-run");
+  fs.writeFileSync(fakeRun, `#!/bin/bash\nprintf '%s\\n' "$*" >> "${runLog}"\n`, { mode: 0o755 });
+  const env = {
+    ...fixture.env,
+    BACKUP_SUITE_UPDATE_LATEST_URL: `file://${release}/latest.json`,
+    BACKUP_SUITE_UPDATE_DOWNLOAD_BASE: `file://${release}/`,
+    BACKUP_SUITE_SYSTEMD_RUN: fakeRun
+  };
+  const { createApp, VERSION } = require("../server");
+  const app = createApp({ env });
+  const server = http.createServer(app.handle);
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = server.address().port;
+  try {
+    const session = await request(port, "GET", "/api/session");
+    const headers = { "Content-Type": "application/json", "X-CSRF-Token": session.json.csrf, Origin: `http://127.0.0.1:${port}` };
+    const updates = await request(port, "GET", "/api/updates");
+    assert.strictEqual(updates.status, 200, updates.text);
+    assert.strictEqual(updates.json.latest.ok, true, JSON.stringify(updates.json.latest));
+    assert.strictEqual(updates.json.latest.latest, "9.9.9");
+    assert.strictEqual(updates.json.gui.version, VERSION);
+    assert.strictEqual(updates.json.gui.update_available, true);
+    assert.strictEqual(updates.json.backend.supported, true);
+    assert.strictEqual(updates.json.backend.update_available, true);
+
+    const older = await request(port, "POST", "/api/updates/apply", { headers, body: { target: "gui", version: "0.0.1" } });
+    assert.strictEqual(older.status, 400);
+    assert.strictEqual((await request(port, "POST", "/api/updates/apply", { headers, body: { target: "nothing", version: "9.9.9" } })).status, 400);
+    assert.strictEqual((await request(port, "POST", "/api/updates/apply", { body: { target: "gui", version: "9.9.9" } })).status, 403);
+
+    const started = await request(port, "POST", "/api/updates/apply", { headers, body: { target: "gui", version: "9.9.9" } });
+    assert.strictEqual(started.status, 202, started.text);
+    const logged = fs.readFileSync(runLog, "utf8");
+    assert.match(logged, /--user --unit backup-suite-gui-update --collect/);
+    assert.match(logged, /gui-apply --version 9\.9\.9/);
+  } finally {
+    server.close();
+  }
+});

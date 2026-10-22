@@ -2683,6 +2683,95 @@ def verb_fs_browse(request):
     return dict(base, folders=folders, truncated=truncated, selectable=not reason, reason=reason)
 
 
+# --------------------------------------------------------------------------- updates
+#
+# Backup Suite updates itself from this project's GitHub releases with
+# bin/backup-suite-update.py. The update runs in its own transient unit
+# (backup-suite-update.service, as root in system mode), so it outlives this
+# request and the GUI; the GUI follows it with update.status.
+
+UPDATE_UNIT = "backup-suite-update"
+SYSTEMD_RUN = ENV.get("BACKUP_SUITE_SYSTEMD_RUN", "systemd-run")
+
+
+def installed_version():
+    try:
+        with open(os.path.join(BIN_DIR, os.pardir, "VERSION"), encoding="utf-8") as handle:
+            return handle.read().strip()[:20] or "unknown"
+    except OSError:
+        return "unknown"
+
+
+def version_tuple(text):
+    match = re.match(r"^([0-9]{1,4})\.([0-9]{1,5})\.([0-9]{1,6})$", str(text or ""))
+    return tuple(int(part) for part in match.groups()) if match else None
+
+
+def update_state_dir():
+    path = state_path("updates")
+    os.makedirs(path, mode=0o750, exist_ok=True)
+    return path
+
+
+def update_unit_active():
+    code, out, _ = systemctl("is-active", UPDATE_UNIT + ".service")
+    return out.strip() in ("active", "activating", "reloading")
+
+
+def read_update_status():
+    code, out, err = run([sys.executable, "-I", bin_script("backup-suite-update.py"), "status",
+                          "--state-dir", update_state_dir()], READ_TIMEOUT)
+    try:
+        status = json.loads(out).get("data") or {}
+    except ValueError:
+        status = {"state": "unknown"}
+    if status.get("state") == "running" and not update_unit_active():
+        # The unit is gone but never wrote its end: it was killed or the host rebooted.
+        status["state"] = "failed"
+        status["error"] = "The update stopped before it finished; the previous version stays in use."
+    return status
+
+
+def verb_update_status(request):
+    get_args(request, [])
+    return {"installed": installed_version(), "mode": MODE, "status": read_update_status(),
+            "updater": os.path.isfile(bin_script("backup-suite-update.py"))}
+
+
+def verb_update_apply(request):
+    args = get_args(request, ["version", "stop_running"])
+    version = str(args.get("version") or "")
+    if not version_tuple(version):
+        invalid("version must look like 1.2.3.")
+    stop_running = args.get("stop_running", False)
+    if not isinstance(stop_running, bool):
+        invalid("stop_running must be true or false.")
+    current = version_tuple(installed_version())
+    if current and version_tuple(version) <= current:
+        raise ControlError("invalid_request", "Version %s is not newer than the installed %s." % (version, installed_version()))
+    if update_unit_active():
+        raise ControlError("busy", "An update is already running.")
+    command = [SYSTEMD_RUN]
+    if SCOPE == "user":
+        command.append("--user")
+    command += ["--unit", UPDATE_UNIT, "--collect", "--quiet",
+                "--description", "Backup Suite update to %s" % version]
+    for name in ("BACKUP_SUITE_UPDATE_LATEST_URL", "BACKUP_SUITE_UPDATE_DOWNLOAD_BASE"):
+        if ENV.get(name):
+            command += ["--setenv", "%s=%s" % (name, ENV[name])]
+    command += ["--", sys.executable, "-I", bin_script("backup-suite-update.py"), "apply",
+                "--version", version, "--state-dir", update_state_dir()]
+    if stop_running:
+        command.append("--stop-running")
+    code, out, err = run(command, CHANGE_TIMEOUT)
+    if code != 0:
+        raise ControlError("systemctl_failed", (err or out).strip()[:500] or "systemd-run failed.")
+    record_event("info", "gui-action", "Updating Backup Suite to %s" % version,
+                 "Started from the GUI by %s. The installer tests the release first and keeps the previous version if anything fails." % CALLER_LOGIN,
+                 UPDATE_UNIT + ".service")
+    return {"started": True, "version": version, "unit": UPDATE_UNIT + ".service"}
+
+
 VERBS = {
     "status": (verb_status, False),
     "history": (verb_history, False),
@@ -2725,6 +2814,8 @@ VERBS = {
     "remote.delete": (verb_remote_delete, True),
     "remote.browse": (verb_remote_browse, False),
     "fs.browse": (verb_fs_browse, False),
+    "update.status": (verb_update_status, False),
+    "update.apply": (verb_update_apply, True),
 }
 
 

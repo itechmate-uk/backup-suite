@@ -1921,6 +1921,92 @@ test_gui_broker_installer_guards() {
     assert_contains "$test_root/backup-suite-control@.service.template" 'ExecStart=/opt/x/bin/backup-control.sh --peer %i'
 }
 
+make_fake_release() {
+    # make_fake_release <dir> <version> [evil]: a release like the Release
+    # workflow's, served from file:// URLs, whose installers only leave a mark.
+    python3 "$ROOT_DIR/tests/fixtures/make-fake-release.py" "$@"
+}
+
+test_self_update() {
+    # The updater: check, verified download, safe extraction, apply, refusals;
+    # the control verbs update.status and update.apply.
+    local test_root updater reply release_dir
+    test_root=$(mktemp -d)
+    updater="$ROOT_DIR/bin/backup-suite-update.py"
+    release_dir="$test_root/release"
+    make_fake_release "$release_dir" 9.9.9
+    export BACKUP_SUITE_UPDATE_LATEST_URL="file://$release_dir/latest.json"
+    export BACKUP_SUITE_UPDATE_DOWNLOAD_BASE="file://$release_dir/"
+    export UPDATE_MARK="$test_root/mark.log"
+
+    reply=$(python3 -I "$updater" check --current 1.0.1)
+    [ "$(json_field "$reply" 'd["data"]["update_available"]')" = "True" ] || fail_test "no update found: $reply"
+    [ "$(json_field "$reply" 'd["data"]["latest"]')" = "9.9.9" ] || fail_test "wrong latest: $reply"
+    reply=$(python3 -I "$updater" check --current 9.9.9)
+    [ "$(json_field "$reply" 'd["data"]["update_available"]')" = "False" ] || fail_test "same version offered: $reply"
+
+    python3 -I "$updater" apply --version 9.9.8 --state-dir "$test_root/state" > "$test_root/reply.json" && fail_test 'a version other than the latest was installed'
+    assert_contains "$test_root/reply.json" 'not 9.9.8'
+
+    python3 -I "$updater" apply --version 9.9.9 --state-dir "$test_root/state" > "$test_root/reply.json" || { cat "$test_root/reply.json" >&2; fail_test 'apply failed'; }
+    assert_contains "$UPDATE_MARK" 'install.sh --no-user-gui'
+    reply=$(python3 -I "$updater" status --state-dir "$test_root/state")
+    [ "$(json_field "$reply" 'd["data"]["state"]')" = "done" ] || fail_test "status not done: $reply"
+    assert_contains "$test_root/state/update-backup-suite-9.9.9.log" 'SHA-256 matches'
+
+    # A changed archive is refused before anything runs.
+    : > "$UPDATE_MARK"
+    printf 'tampered' >> "$release_dir/v9.9.9/backup-suite-9.9.9.tar.gz"
+    python3 - "$release_dir" <<'PY'
+import json, os, sys
+path = os.path.join(sys.argv[1], "latest.json")
+release = json.load(open(path))
+for asset in release["assets"]:
+    asset["size"] = os.path.getsize(os.path.join(sys.argv[1], release["tag_name"], asset["name"]))
+json.dump(release, open(path, "w"))
+PY
+    python3 -I "$updater" apply --version 9.9.9 --state-dir "$test_root/state2" > "$test_root/reply.json" && fail_test 'a tampered archive was installed'
+    assert_contains "$test_root/reply.json" 'does not match'
+    [ ! -s "$UPDATE_MARK" ] || fail_test 'the installer ran for a tampered archive'
+    reply=$(python3 -I "$updater" status --state-dir "$test_root/state2")
+    [ "$(json_field "$reply" 'd["data"]["state"]')" = "failed" ] || fail_test "status not failed: $reply"
+
+    # An archive with a path outside its folder is refused.
+    rm -rf "$release_dir"
+    make_fake_release "$release_dir" 9.9.9 evil
+    python3 -I "$updater" apply --version 9.9.9 --state-dir "$test_root/state3" > "$test_root/reply.json" && fail_test 'an archive with ../ was installed'
+    assert_contains "$test_root/reply.json" 'unexpected path'
+    [ ! -e "$test_root/state3/evil.txt" ] && [ ! -e "$test_root/evil.txt" ] || fail_test 'a file was written outside the release folder'
+
+    # The GUI's own update runs the release's GUI installer.
+    rm -rf "$release_dir"
+    make_fake_release "$release_dir" 9.9.9
+    : > "$UPDATE_MARK"
+    mkdir -p "$test_root/fakebin"
+    printf '#!/bin/bash\necho active\n' > "$test_root/fakebin/systemctl"
+    chmod 755 "$test_root/fakebin/systemctl"
+    PATH="$test_root/fakebin:$PATH" python3 -I "$updater" gui-apply --version 9.9.9 --state-dir "$test_root/gui-state" > "$test_root/reply.json" || { cat "$test_root/reply.json" >&2; fail_test 'gui-apply failed'; }
+    assert_contains "$UPDATE_MARK" 'gui-server install'
+
+    # The control verbs.
+    setup_control_root "$test_root/control"
+    reply=$(control_call "$test_root/control" '{"verb":"update.status"}')
+    [ "$(json_field "$reply" 'd["data"]["installed"]')" = "$(cat "$ROOT_DIR/VERSION")" ] || fail_test "update.status: $reply"
+    reply=$(control_call "$test_root/control" '{"verb":"update.apply","args":{"version":"1.0.0"}}')
+    [ "$(json_field "$reply" 'd["error"]["code"]')" = "invalid_request" ] || fail_test "an older version was accepted: $reply"
+    printf '#!/bin/bash\nprintf "%%s\\n" "$*" >> "%s"\n' "$test_root/systemd-run.log" > "$test_root/fake-systemd-run"
+    chmod 755 "$test_root/fake-systemd-run"
+    reply=$(BACKUP_SUITE_SYSTEMD_RUN="$test_root/fake-systemd-run" control_call "$test_root/control" '{"verb":"update.apply","args":{"version":"9.9.9","stop_running":true}}')
+    [ "$(json_field "$reply" 'd["ok"]')" = "True" ] || fail_test "update.apply failed: $reply"
+    assert_contains "$test_root/systemd-run.log" '--user --unit backup-suite-update --collect'
+    assert_contains "$test_root/systemd-run.log" 'apply --version 9.9.9'
+    assert_contains "$test_root/systemd-run.log" '--stop-running'
+    assert_contains "$test_root/control/state/gui/audit.jsonl" '"verb": "update.apply"'
+
+    unset BACKUP_SUITE_UPDATE_LATEST_URL BACKUP_SUITE_UPDATE_DOWNLOAD_BASE UPDATE_MARK
+    rm -rf "$test_root"
+}
+
 test_release_installer() {
     # install.sh as a user: a fresh install with a starting configuration, then
     # an upgrade that keeps the configuration. systemd is faked.
@@ -2075,6 +2161,7 @@ run_test 'control script actions, audit and peer check' test_control_actions_and
 run_test 'events file and run progress' test_events_and_progress_files
 run_test 'GUI broker installer guards and templates' test_gui_broker_installer_guards
 run_test 'release installer: fresh user install and upgrade' test_release_installer
+run_test 'self-update: verified download, safe extraction, control verbs' test_self_update
 run_test 'GUI server, events, bundle and contrast (node)' test_gui_node_suite
 
 echo "Tests: passed=$PASS_COUNT failed=$FAIL_COUNT"

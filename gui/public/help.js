@@ -102,6 +102,15 @@ window.BACKUP_SUITE_HELP = {
       ["Safety", "Tokens and passwords are stored by rclone and never shown. Only cloud and network types can be set up here, and no option that reads a file or runs a program, because rclone runs as root. A destination in use cannot be removed; removing one never deletes what is stored on it."]
     ]
   },
+  updates: {
+    title: "Updates",
+    sections: [
+      ["Where updates come from", "This project's releases on GitHub. The GUI checks for the latest release (every 6 hours when automatic checks are on in Settings, or with Check now). Only the latest published release can be installed, never an older one or a file from elsewhere."],
+      ["Checks", "Each download is checked against the SHA-256 published with the release, and every file in it must stay inside its folder; otherwise nothing is installed."],
+      ["Backup Suite", "Updated in the background by its own installer (as root in a system install): a running backup is waited for (or stopped, if you choose), the tests run first, and if anything fails the previous version stays in use. Configuration, credentials, jobs and the resource setup are kept."],
+      ["GUI", "Your own GUI updates itself as your login, without sudo, and restarts; the page reconnects. If the new GUI does not start, the previous one is put back. A system-wide GUI is updated together with Backup Suite."]
+    ]
+  },
   sources: {
     title: "Sources file",
     sections: [

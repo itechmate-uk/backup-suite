@@ -24,6 +24,7 @@
       <button id="reload-button" class="icon-button" type="button" title="Reload the GUI" aria-label="Reload the GUI">&#10227;</button>
       <button id="settings-button" class="icon-button" type="button" title="Settings" aria-label="Settings">&#9881;</button>
       <button id="admin-button" type="button" title="Backup Suite administration: actions, schedule, profiles, watchdog, ntfy, server settings, runs, logs and audit">Admin</button>
+      <button id="update-button" type="button" class="update-button" title="A newer Backup Suite release is available" hidden>Update available</button>
       <button id="connect-button" class="icon-button" type="button" title="Ways to connect to this GUI" aria-label="Ways to connect to this GUI">&#8681;</button>
       <button id="reset-panels-button" type="button" title="Reset panels to the default arrangement">Reset Panels</button>
       <div class="runtime-label" title="Backup Suite install mode this GUI manages">
@@ -188,6 +189,11 @@
             </select>
           </label>
           <p class="settings-help" id="settings-backend-note"></p>
+        </fieldset>
+        <fieldset class="settings-option-group">
+          <legend>Updates</legend>
+          <label class="inline-check"><input name="updates.autoCheck" type="checkbox"><span>Check for new releases automatically (every 6 hours)</span></label>
+          <p class="settings-help">Only checks; nothing is installed until you choose Update under Admin → Updates.</p>
         </fieldset>
       </section>
 

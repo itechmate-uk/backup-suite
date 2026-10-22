@@ -38,7 +38,24 @@ function loginName() {
 // profile for this server exactly, so it is editable and saved.
 function backendId(settings) {
   if (settings.tunnel.backendId) return settings.tunnel.backendId;
-  return `${loginName()}@${settings.tunnel.sshHost || primaryIPv4()}`;
+  return `${guessLogin()}@${settings.tunnel.sshHost || primaryIPv4()}`;
+}
+
+// A system-wide GUI runs as its own account, which nobody signs in as: guess the
+// first GUI admin (a member of its group) instead.
+function guessLogin(env = process.env) {
+  const group = String(env.BACKUP_SUITE_GUI_SOCKET_GROUP || "").trim();
+  if (String(env.BACKUP_SUITE_GUI_SYSTEM || "") === "1" && group) {
+    try {
+      const line = require("fs").readFileSync("/etc/group", "utf8").split("\n").find((row) => row.split(":")[0] === group);
+      const member = line ? line.split(":")[3].split(",").map((name) => name.trim()).find(Boolean) : "";
+      if (member) return member;
+    } catch {
+      // fall through
+    }
+    return "LOGIN";
+  }
+  return loginName();
 }
 
 function profile(settings, listen, unitName) {
@@ -49,7 +66,8 @@ function profile(settings, listen, unitName) {
     remoteSocket: listen.socket && listen.forwardable ? listen.socketPath : "",
     remotePort: listen.port,
     localPort: settings.tunnel.localPort,
-    unit: unitName
+    unit: unitName,
+    system: Boolean(listen.system)
   };
 }
 
@@ -82,8 +100,14 @@ function tunnelManagerToml(p) {
     "[tunnel.launch.browser]", 'url = "http://127.0.0.1:{local_port}/"', 'mode = "webview"', 'browser = "auto"', "",
     "[tunnel.events]", "enabled = true", 'url = "http://127.0.0.1:{local_port}/api/events"', 'poll_interval = "5s"', "",
     "[tunnel.notifications]", 'mode = "enabled"', 'minimum_severity = "warning"', "suppress_browser_duplicates = true", "include_detailed_app_messages = true", "",
-    "[tunnel.remote_service]", "enabled = true", 'provider = "systemd-user"', `unit = ${tomlString(p.unit)}`, 'policy = "start-if-stopped"',
-    'monitor_interval = "30s"', 'command_timeout = "15s"', 'start_timeout = "60s"', "restart_limit = 3", 'restart_window = "10m"', "stop_on_tunnel_stop = false");
+    "[tunnel.remote_service]");
+  if (p.system) {
+    // A system-wide GUI is a system unit that always runs; a login cannot start it.
+    lines.push("enabled = false");
+  } else {
+    lines.push("enabled = true", 'provider = "systemd-user"', `unit = ${tomlString(p.unit)}`, 'policy = "start-if-stopped"',
+      'monitor_interval = "30s"', 'command_timeout = "15s"', 'start_timeout = "60s"', "restart_limit = 3", 'restart_window = "10m"', "stop_on_tunnel_stop = false");
+  }
   return `${lines.join("\n")}\n`;
 }
 

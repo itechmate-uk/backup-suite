@@ -409,6 +409,10 @@ for script_file in "$READ_SOURCE_DIR"/bin/*.sh "$READ_SOURCE_DIR"/bin/*.py; do
     deploy_file "$script_file" "$INSTALL_DIR/bin/$(basename "$script_file")" 755 scripts CONFIRMED_SCRIPTS "installed script"
 done
 deploy_file "$READ_SOURCE_DIR/README.md" "$INSTALL_DIR/README.md" 644 scripts CONFIRMED_SCRIPTS "installed documentation"
+if [ -f "$READ_SOURCE_DIR/VERSION" ]; then
+    # The installed version, which the GUI's updates compare with the latest release.
+    deploy_file "$READ_SOURCE_DIR/VERSION" "$INSTALL_DIR/VERSION" 644 scripts CONFIRMED_SCRIPTS "installed version"
+fi
 
 deploy_symlink "$DEPLOYED_CONFIG_SOURCE_DIR/global.conf" "$CONFIG_DIR/global.conf" config CONFIRMED_CONFIG "runtime config"
 deploy_symlink "$DEPLOYED_CONFIG_SOURCE_DIR/file-sources.conf" "$CONFIG_DIR/file-sources.conf" config CONFIRMED_CONFIG "runtime config"

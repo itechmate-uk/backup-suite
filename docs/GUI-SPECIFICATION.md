@@ -633,3 +633,26 @@ production-deploy.sh and setup.sh).
   system and Backup Suite folders, can be used. The picker has a path box (`~` and
   relative paths), Home, Up, Refresh and Go. `FILE_JOB_SOURCE_ROOTS` stays
   server-only.
+
+## Revision 8 (2026-10-22): self-update, GUI without sudo, system-wide GUI
+
+- `bin/backup-suite-update.py` (`check`, `apply`, `gui-apply`, `status`): the latest
+  published release of itechmate-uk/backup-suite only; asset URLs must be under
+  `releases/download/<tag>/`; archive size and SHA-256 must match; extraction refuses
+  absolute paths, `..`, links leaving the folder and other file types; `VERSION` in
+  the archive must match. Keeps the installed and the previous release.
+- Control verbs `update.status` (installed version from `<install>/VERSION`, update
+  status) and `update.apply` (`version` newer than installed, `stop_running`):
+  starts `backup-suite-update.service` with `systemd-run` (as root in system mode),
+  which runs the release's `install.sh --no-user-gui`. Audited.
+- GUI: `GET /api/updates[?force=1]`, `POST /api/updates/apply` (`target` gui or
+  backend); its own update runs in `backup-suite-gui-update.service` as the login,
+  with a health check and rollback to `app.previous`. Admin → Updates, top-bar
+  **Update available**, setting `updates.autoCheck` (every 6 hours).
+- The GUI is installed as the admin login (never root); `install.sh --gui-only`
+  without sudo. `install.sh --gui-system` / `backup-suite-gui-server install --system`:
+  system unit `backup-suite-gui.service`, account `backup-suite-gui`, socket
+  `/run/backup-suite-gui/gui.sock` 0660 in a 0750 directory for the group
+  `backup-suite-gui`.
+- `production-deploy.sh` and `setup.sh` install `VERSION`; the deploy restores it on
+  rollback.

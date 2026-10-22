@@ -34,7 +34,7 @@ jobs:
       - name: Check the source
         run: |
           bash -n install.sh setup.sh production-deploy.sh production-file-backup-migrate.sh bin/*.sh tests/run.sh gui/scripts/backup-suite-gui-server gui/scripts/backup-suite-gui-watchdog
-          python3 -c 'import ast, sys; ast.parse(open(sys.argv[1]).read(), sys.argv[1])' bin/backup-control.py
+          for file in bin/backup-control.py bin/backup-suite-update.py; do python3 -c 'import ast, sys; ast.parse(open(sys.argv[1]).read(), sys.argv[1])' "$file"; done
           (cd gui && node --test test/*.test.js)
 
       - name: Build the archive

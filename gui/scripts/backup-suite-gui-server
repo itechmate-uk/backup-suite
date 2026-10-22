@@ -4,7 +4,14 @@
 #
 #   backup-suite-gui-server install     copy the GUI to ~/.local/share/backup-suite-gui/app,
 #                                       write and start the user units (run again to update)
+#   backup-suite-gui-server rollback    go back to the GUI installed before the last install
 #   backup-suite-gui-server uninstall   stop and remove the user units (keeps settings)
+#   sudo backup-suite-gui-server install --system
+#                                       one GUI for the whole server instead: a system unit
+#                                       run by the account backup-suite-gui, its socket
+#                                       /run/backup-suite-gui/gui.sock open to the group
+#                                       backup-suite-gui (the GUI admins)
+#   sudo backup-suite-gui-server uninstall --system
 #   backup-suite-gui-server start|stop|restart
 #   backup-suite-gui-server status [--backend user@host]
 #                                       unit state, the GUI watchdog, and every way to
@@ -28,9 +35,14 @@ CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
 APP_DIR="$DATA_HOME/backup-suite-gui/app"
 UNIT_DIR="$CONFIG_HOME/systemd/user"
 NODE_MIN_MAJOR=18
+SYSTEM_ROOT=/usr/local/lib/backup-suite-gui
+SYSTEM_UNIT=backup-suite-gui.service
+SYSTEM_USER=backup-suite-gui
+SYSTEM_GROUP=backup-suite-gui
+SYSTEM_STATE=/var/lib/backup-suite-gui
 
 usage() {
-  sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 die() {
@@ -81,17 +93,22 @@ render() {
   mv -f "$output.tmp" "$output"
 }
 
+# Copies the GUI to $APP_DIR; the copy it replaces stays as $APP_DIR.previous for
+# rollback. The updater (bin/backup-suite-update.py in a release or checkout) goes
+# into scripts/, so the GUI can update itself.
 copy_app() {
   local staging="$APP_DIR.new"
   rm -rf "$staging"
   mkdir -p "$staging"
   cp -a "$SOURCE_GUI_DIR/server.js" "$SOURCE_GUI_DIR/package.json" "$SOURCE_GUI_DIR/lib" "$SOURCE_GUI_DIR/public" \
     "$SOURCE_GUI_DIR/scripts" "$SOURCE_GUI_DIR/systemd" "$staging/"
+  if [ -f "$SOURCE_GUI_DIR/../bin/backup-suite-update.py" ]; then
+    install -m 755 "$SOURCE_GUI_DIR/../bin/backup-suite-update.py" "$staging/scripts/backup-suite-update.py"
+  fi
   chmod -R go-w "$staging"
-  rm -rf "$APP_DIR.old"
-  [ -d "$APP_DIR" ] && mv "$APP_DIR" "$APP_DIR.old"
+  rm -rf "$APP_DIR.previous"
+  [ -d "$APP_DIR" ] && mv "$APP_DIR" "$APP_DIR.previous"
   mv "$staging" "$APP_DIR"
-  rm -rf "$APP_DIR.old"
 }
 
 install_gui() {
@@ -124,6 +141,73 @@ install_gui() {
   fi
   echo "Ways to connect (Tunnel Manager profile, launchers, phone, manual): $0 status"
   echo "Set the user@host of your Tunnel Manager profile first if it differs: $0 backend $(id -un)@<this server as in that profile>"
+}
+
+rollback_gui() {
+  [ -d "$APP_DIR.previous" ] || die "There is no previous GUI in $APP_DIR.previous."
+  rm -rf "$APP_DIR.failed"
+  mv "$APP_DIR" "$APP_DIR.failed"
+  mv "$APP_DIR.previous" "$APP_DIR"
+  systemctl --user reset-failed "$UNIT" >/dev/null 2>&1 || true
+  systemctl --user restart "$UNIT"
+  echo "Back to the previous GUI ($(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' "$APP_DIR/package.json")); the failed one is in $APP_DIR.failed."
+}
+
+# ------------------------------------------------------------ system-wide GUI
+
+install_system_gui() {
+  local node
+  [ "$(id -u)" -eq 0 ] || die "install --system needs root (sudo)."
+  node=$(find_node) || die "Node.js $NODE_MIN_MAJOR or newer is required (set BACKUP_SUITE_GUI_NODE to its path)."
+  if ! getent group "$SYSTEM_GROUP" >/dev/null; then
+    groupadd --system "$SYSTEM_GROUP"
+  fi
+  if ! getent passwd "$SYSTEM_USER" >/dev/null; then
+    useradd --system --gid "$SYSTEM_GROUP" --no-create-home --home-dir "$SYSTEM_STATE" --shell /usr/sbin/nologin \
+      --comment "Backup Suite GUI" "$SYSTEM_USER"
+  fi
+  # A copy owned by root that the service account can read but not change.
+  install -d -m 755 "$SYSTEM_ROOT"
+  APP_DIR="$SYSTEM_ROOT/app"
+  copy_app
+  chown -R root:root "$SYSTEM_ROOT"
+  chmod -R a+rX,go-w "$APP_DIR"
+  sed \
+    -e "s|__GUI_DIR__|$APP_DIR|g" \
+    -e "s|__NODE__|$node|g" \
+    -e "s|__USER__|$SYSTEM_USER|g" \
+    -e "s|__GROUP__|$SYSTEM_GROUP|g" \
+    -e "s|__MEMORY_HIGH__|128|g" \
+    -e "s|__MEMORY_MAX__|192|g" \
+    -e "s|__TASKS_MAX__|64|g" \
+    "$APP_DIR/systemd/backup-suite-gui-system.service.template" > "/etc/systemd/system/$SYSTEM_UNIT.tmp"
+  if grep -Eq '__[A-Z_]+__' "/etc/systemd/system/$SYSTEM_UNIT.tmp"; then
+    rm -f "/etc/systemd/system/$SYSTEM_UNIT.tmp"
+    die "Unresolved placeholder in $SYSTEM_UNIT"
+  fi
+  chmod 644 "/etc/systemd/system/$SYSTEM_UNIT.tmp"
+  mv -f "/etc/systemd/system/$SYSTEM_UNIT.tmp" "/etc/systemd/system/$SYSTEM_UNIT"
+  systemctl daemon-reload
+  systemctl enable "$SYSTEM_UNIT" >/dev/null
+  systemctl reset-failed "$SYSTEM_UNIT" >/dev/null 2>&1 || true
+  systemctl restart "$SYSTEM_UNIT"
+  sleep 2
+  echo "Installed $SYSTEM_UNIT (Node $node, app $APP_DIR), run by $SYSTEM_USER."
+  echo "State: $(systemctl is-active "$SYSTEM_UNIT" 2>/dev/null || true)"
+  echo "Socket: /run/backup-suite-gui/gui.sock, for the members of $SYSTEM_GROUP: $(getent group "$SYSTEM_GROUP" | cut -d: -f4)"
+  echo "Add an admin: sudo usermod -a -G $SYSTEM_GROUP <login> (then that login logs in again)."
+}
+
+uninstall_system_gui() {
+  [ "$(id -u)" -eq 0 ] || die "uninstall --system needs root (sudo)."
+  systemctl disable --now "$SYSTEM_UNIT" >/dev/null 2>&1 || true
+  rm -f "/etc/systemd/system/$SYSTEM_UNIT"
+  systemctl daemon-reload
+  echo "Removed $SYSTEM_UNIT. Its settings stay in $SYSTEM_STATE and the app in $SYSTEM_ROOT; the account $SYSTEM_USER is kept."
+}
+
+system_flag() {
+  [ "${1:-}" = "--system" ]
 }
 
 uninstall_gui() {
@@ -173,8 +257,13 @@ print_status() {
 }
 
 case "${1:-}" in
-  install) install_gui ;;
-  uninstall) uninstall_gui ;;
+  install)
+    if system_flag "${2:-}"; then install_system_gui; else install_gui; fi
+    ;;
+  uninstall)
+    if system_flag "${2:-}"; then uninstall_system_gui; else uninstall_gui; fi
+    ;;
+  rollback) rollback_gui ;;
   start|stop|restart) systemctl --user "$1" "$UNIT" ;;
   status) shift; print_status "$@" ;;
   bundle) shift; connect_cli bundle $(backend_option "$@") ;;

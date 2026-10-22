@@ -18,11 +18,14 @@ const { EventStore } = require("./lib/events");
 const { Live } = require("./lib/live");
 const bundle = require("./lib/bundle");
 const guard = require("./lib/http-guard");
+const { Updates, isNewer } = require("./lib/updates");
 
 const ROOT = __dirname;
 const PUBLIC_DIR = path.join(ROOT, "public");
 const VERSION = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8")).version;
-const UNIT_NAME = `backup-suite-gui-${listenConfig.INSTANCE}.service`;
+// The system-wide GUI is one system unit; a login's own GUI is a user unit.
+const SYSTEM_GUI = String(process.env.BACKUP_SUITE_GUI_SYSTEM || "") === "1";
+const UNIT_NAME = SYSTEM_GUI ? "backup-suite-gui.service" : `backup-suite-gui-${listenConfig.INSTANCE}.service`;
 const MAX_BODY_BYTES = 256 * 1024;
 const STARTED_AT = new Date().toISOString();
 // The build of the page files this server serves: a hash of public/. A page that
@@ -65,6 +68,7 @@ function createApp({ env = process.env } = {}) {
   const client = new ControlClient({ env, getPreference: () => settings.general.backend });
   const events = new EventStore({ client, stateDir, getSettings: () => settings, log });
   const live = new Live({ client, events, getSettings: () => settings, log, build: BUILD, idleStopMs: Number(env.BACKUP_SUITE_GUI_STREAM_GRACE_MS) || undefined });
+  const updates = new Updates({ appDir: ROOT, version: VERSION, stateDir, env, systemGui: SYSTEM_GUI });
   let listen = listenConfig.resolveListen({ env, settings });
 
   function sendJson(res, status, body) {
@@ -228,7 +232,56 @@ function createApp({ env = process.env } = {}) {
         }
         return sendJson(res, 200, { ok: true, data });
       } catch (error) {
-        const status = error.code === "invalid_request" ? 400 : error.code === "forbidden" ? 403 : error.code === "config_conflict" ? 409 : error.code === "not_installed" ? 503 : 502;
+        const status = error.code === "invalid_request" ? 400 : error.code === "forbidden" ? 403 : (error.code === "config_conflict" || error.code === "busy") ? 409 : error.code === "not_installed" ? 503 : 502;
+        return sendError(res, status, error.code || "error", error.message);
+      }
+    }
+
+    if (req.method === "GET" && pathname === "/api/updates") {
+      const force = url.searchParams.get("force") === "1";
+      const [latest, guiStatus, backend] = await Promise.all([
+        updates.check({ force }),
+        updates.guiStatus(),
+        client.call("update.status", {}, { session: session ? `gui-${session}` : "gui" })
+          .then((data) => ({ supported: true, ...data }))
+          .catch((error) => ({
+            supported: false,
+            code: error.code || "error",
+            error: error.code === "invalid_request"
+              ? "Backup Suite on the server is older than the update feature; update it once with the installer from a release (sudo ./install.sh)."
+              : error.message
+          }))
+      ]);
+      const latestVersion = latest.ok ? latest.latest : "";
+      return sendJson(res, 200, {
+        ok: true,
+        latest,
+        auto_check: settings.updates.autoCheck,
+        gui: {
+          version: VERSION, system: SYSTEM_GUI, updater: updates.available(), status: guiStatus,
+          update_available: !SYSTEM_GUI && isNewer(latestVersion, VERSION)
+        },
+        backend: { ...backend, update_available: Boolean(backend.supported) && isNewer(latestVersion, backend.installed) }
+      });
+    }
+
+    if (req.method === "POST" && pathname === "/api/updates/apply") {
+      const body = await readBody(req);
+      const target = String(body.target || "");
+      const version = String(body.version || "");
+      try {
+        let data;
+        if (target === "gui") {
+          data = await updates.startGuiUpdate(version);
+        } else if (target === "backend") {
+          data = await client.call("update.apply", { version, stop_running: body.stop_running === true }, { session: session ? `gui-${session}` : "gui" });
+        } else {
+          return sendError(res, 400, "invalid_request", "target must be gui or backend.");
+        }
+        log("update", `${target} update to ${version} started`);
+        return sendJson(res, 202, { ok: true, data });
+      } catch (error) {
+        const status = error.code === "invalid_request" ? 400 : error.code === "busy" ? 409 : error.code === "forbidden" ? 403 : 502;
         return sendError(res, status, error.code || "error", error.message);
       }
     }
@@ -250,6 +303,9 @@ function createApp({ env = process.env } = {}) {
     }
 
     if (req.method === "POST" && pathname === "/api/gui/restart") {
+      if (SYSTEM_GUI) {
+        return sendError(res, 409, "system_gui", "This GUI is a system service; restart it with: sudo systemctl restart backup-suite-gui.service");
+      }
       if (!env.INVOCATION_ID) {
         return sendError(res, 409, "not_systemd", "The GUI is not running under systemd; restart it by hand.");
       }
@@ -342,7 +398,17 @@ function createApp({ env = process.env } = {}) {
     }
   }
 
-  return { handle, client, events, live, settings: () => settings, listen: () => listen, setListen: (value) => { listen = value; }, csrfToken };
+  // Automatic update checks (Settings: updates.autoCheck): the result is cached and
+  // shown as "Update available" in the page.
+  const autoCheck = () => {
+    if (settings.updates.autoCheck) updates.check().catch(() => {});
+  };
+  if (!env.BACKUP_SUITE_GUI_NO_AUTO_UPDATE_CHECK) {
+    setTimeout(autoCheck, 30 * 1000).unref?.();
+    setInterval(autoCheck, 6 * 60 * 60 * 1000).unref?.();
+  }
+
+  return { handle, client, events, live, updates, settings: () => settings, listen: () => listen, setListen: (value) => { listen = value; }, csrfToken };
 }
 
 async function start() {
@@ -351,20 +417,20 @@ async function start() {
   const servers = [];
   if (listen.socket) {
     if (!listen.forwardable) throw new Error(`The socket path ${listen.socketPath} cannot be forwarded (it must be absolute, without spaces or colons).`);
-    const prepared = listenConfig.prepareSocketDirectory(listen.socketDir);
+    const prepared = listenConfig.prepareSocketDirectory(listen.socketDir, { shared: listen.shared });
     if (prepared.tightenedFrom) log("listen", `tightened ${listen.socketDir} from ${prepared.tightenedFrom} to 700`);
     const stale = await listenConfig.clearStaleSocket(listen.socketPath);
     if (stale === "in-use") throw new Error(`Another process already listens on ${listen.socketPath}.`);
     const server = http.createServer(app.handle);
     await new Promise((resolve, reject) => {
       server.once("error", reject);
-      const previous = process.umask(0o177);
+      const previous = process.umask(listen.shared ? 0o117 : 0o177);
       server.listen(listen.socketPath, () => {
         process.umask(previous);
         resolve();
       });
     });
-    listenConfig.confirmSocketPrivate(listen.socketPath);
+    listenConfig.confirmSocketPrivate(listen.socketPath, { shared: listen.shared });
     servers.push(server);
     log("listen", `socket ${listen.socketPath}`);
   }

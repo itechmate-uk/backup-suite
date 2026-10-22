@@ -52,7 +52,8 @@ function defaults() {
     general: { refreshSeconds: 5, chartMinutes: 30, timeDisplay: "utc", theme: "system", backend: "auto" },
     notifications: { tunnelManager: true, browser: true, preferTunnelManager: true, categories },
     tunnel: { listenMode: "socket", tcpPort: 4337, sshHost: "", backendId: "", localPort: 14337 },
-    limits: { memoryHighMb: 96, memoryMaxMb: 160, tasksMax: 64, watchdogMemoryMb: 140, watchdogTasks: 56 }
+    limits: { memoryHighMb: 96, memoryMaxMb: 160, tasksMax: 64, watchdogMemoryMb: 140, watchdogTasks: 56 },
+    updates: { autoCheck: true }
   };
 }
 
@@ -77,6 +78,7 @@ function normalize(input) {
   const notifications = source.notifications || {};
   const tunnel = source.tunnel || {};
   const limits = source.limits || {};
+  const updates = source.updates || {};
   const categories = {};
   for (const category of NOTIFICATION_CATEGORIES) {
     const value = notifications.categories ? notifications.categories[category] : undefined;
@@ -110,6 +112,9 @@ function normalize(input) {
       tasksMax: clampInt(limits.tasksMax, base.limits.tasksMax, 16, 512),
       watchdogMemoryMb: clampInt(limits.watchdogMemoryMb, base.limits.watchdogMemoryMb, 48, 2048),
       watchdogTasks: clampInt(limits.watchdogTasks, base.limits.watchdogTasks, 8, 512)
+    },
+    updates: {
+      autoCheck: typeof updates.autoCheck === "boolean" ? updates.autoCheck : true
     }
   };
 }

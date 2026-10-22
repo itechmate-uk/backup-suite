@@ -5,11 +5,18 @@
 #   sudo ./install.sh     system install: backups run as root and may back up any
 #                         folder under FILE_JOB_SOURCE_ROOTS (/home /var/www /srv /opt)
 #   ./install.sh          user install: backups run as you, for your own files
+#   ./install.sh --gui-only
+#                         only the GUI, for your login, without sudo
+#
+# The GUI never runs as root. By default it is a user service of the admin
+# login (like agentw-gui); --gui-system installs one shared system service run
+# by its own unprivileged account instead.
 #
 # A first install creates a starting configuration (no backup jobs, no
-# destinations) and installs the GUI for the admin login; everything else is
-# set up in the GUI. When Backup Suite is already installed, the same command
-# upgrades it: the configuration, credentials and the resource setup are kept.
+# destinations) and installs the GUI; everything else is set up in the GUI.
+# Updates are installed from the GUI (Admin -> Updates); running this again
+# from a newer release upgrades too, keeping the configuration, credentials
+# and the resource setup.
 
 set -euo pipefail
 
@@ -23,6 +30,10 @@ USER_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/backup-suite"
 NODE_MIN_MAJOR=18
 
 INSTALL_GUI=1
+USER_GUI=1
+SYSTEM_GUI=0
+GUI_ONLY=0
+SYSTEM_GUI_UNIT="/etc/systemd/system/backup-suite-gui.service"
 INSTALL_DEPS=0
 DRY_RUN=0
 GUI_ADMINS=()
@@ -34,15 +45,23 @@ usage() {
     cat <<'EOF'
 Usage: sudo ./install.sh [options]     system install (recommended on a server)
        ./install.sh [options]          user install (your own files only)
+       ./install.sh --gui-only         only the GUI, for your login (no sudo)
 
 Installs Backup Suite and its browser GUI, or upgrades an existing install
-(configuration, credentials and resource setup are kept).
+(configuration, credentials and resource setup are kept). The GUI never runs
+as root: it is a user service of the admin login, or with --gui-system one
+system service run by the unprivileged account backup-suite-gui.
 
 Options:
-  --gui-admin LOGIN  the login that runs and uses the GUI (system install;
-                     repeatable; default: the user who ran sudo). The first one
-                     gets the GUI service.
+  --gui-admin LOGIN  a login that may use the GUI (system install; repeatable;
+                     default: the user who ran sudo). The first one gets its
+                     own GUI service, unless --gui-system.
+  --gui-system       one GUI for the whole server (system service, shared by the
+                     members of group backup-suite-gui) instead of a per-login GUI
+  --gui-only         install or update only the GUI
   --no-gui           do not install the GUI
+  --no-user-gui      do not install a per-login GUI (a system-wide GUI that is
+                     installed is still updated; used by the updater)
   --install-deps     install missing packages with apt-get or dnf
                      (rclone, python3, nodejs, curl, acl)
   --profile NAME     resource profile slow|moderate|fast (upgrade: default keeps
@@ -80,6 +99,9 @@ while [ "$#" -gt 0 ]; do
             shift
             ;;
         --no-gui) INSTALL_GUI=0 ;;
+        --no-user-gui) USER_GUI=0 ;;
+        --gui-system) SYSTEM_GUI=1; USER_GUI=0 ;;
+        --gui-only) GUI_ONLY=1 ;;
         --install-deps) INSTALL_DEPS=1 ;;
         --profile|--floor)
             [ "$#" -ge 2 ] || die "$1 needs a value"
@@ -277,6 +299,29 @@ install_gui_system() {
     install_gui_as "$login" "$gui_copy"
 }
 
+install_gui_systemwide() {
+    log "Installing the system-wide GUI (run by the account backup-suite-gui)."
+    fix_modes "$SOURCE_DIR"
+    bash "$SOURCE_DIR/gui/scripts/backup-suite-gui-server" install --system
+    for admin in "${GUI_ADMINS[@]}"; do
+        if ! id -nG "$admin" | tr ' ' '\n' | grep -Fxq backup-suite-gui; then
+            usermod -a -G backup-suite-gui "$admin"
+            log "Added $admin to backup-suite-gui (it may use the GUI after logging in again)."
+        fi
+    done
+}
+
+system_gui_next_steps() {
+    cat <<'TEXT'
+
+Open the GUI: it listens on /run/backup-suite-gui/gui.sock, for the members of
+the group backup-suite-gui. From your computer, as one of them:
+  ssh -N -L 127.0.0.1:14337:/run/backup-suite-gui/gui.sock LOGIN@SERVER
+then open http://127.0.0.1:14337/ (the GUI's Ways to connect has a Tunnel
+Manager profile and launchers too).
+TEXT
+}
+
 gui_next_steps() {
     local who="$1"
     local script="~/.local/share/backup-suite-gui/app/scripts/backup-suite-gui-server"
@@ -309,7 +354,14 @@ EOF
 
 log "Backup Suite $VERSION, $MODE install, from $SOURCE_DIR"
 
-if [ "$MODE" = "system" ] && [ "$INSTALL_GUI" -eq 1 ]; then
+[ "$SYSTEM_GUI" -eq 0 ] || [ "$MODE" = "system" ] || die "--gui-system needs sudo."
+[ "$INSTALL_GUI" -eq 1 ] || [ "$GUI_ONLY" -eq 0 ] || die "--gui-only and --no-gui exclude each other."
+if [ -f "$SYSTEM_GUI_UNIT" ] && [ "$MODE" = "system" ] && [ "$INSTALL_GUI" -eq 1 ]; then
+    # A system-wide GUI is installed: keep that one, do not add a per-login GUI.
+    SYSTEM_GUI=1
+    USER_GUI=0
+fi
+if [ "$MODE" = "system" ] && [ "$INSTALL_GUI" -eq 1 ] && [ "$USER_GUI" -eq 1 ]; then
     if [ "${#GUI_ADMINS[@]}" -eq 0 ]; then
         if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ]; then
             GUI_ADMINS=("$SUDO_USER")
@@ -324,6 +376,23 @@ if [ "$MODE" = "system" ] && [ "$INSTALL_GUI" -eq 1 ]; then
 fi
 
 check_packages
+
+if [ "$GUI_ONLY" -eq 1 ]; then
+    if [ "$SYSTEM_GUI" -eq 1 ]; then
+        install_gui_systemwide
+        system_gui_next_steps
+    elif [ "$MODE" = "system" ]; then
+        install_gui_system
+        gui_next_steps "${GUI_ADMINS[0]}"
+    else
+        fix_modes "$SOURCE_DIR"
+        log "Installing the GUI for $(id -un)."
+        bash "$SOURCE_DIR/gui/scripts/backup-suite-gui-server" install
+        gui_next_steps "$(id -un)"
+    fi
+    log "The GUI of Backup Suite $VERSION is installed."
+    exit 0
+fi
 
 if [ "$MODE" = "system" ]; then
     if [ -f "$SYSTEM_CONFIG_DIR/global.conf" ] && [ -d "$SYSTEM_INSTALL_DIR/bin" ]; then
@@ -375,7 +444,10 @@ if [ "$MODE" = "system" ]; then
         rm -rf "$STAGING_DIR"
         STAGING_DIR=""
     fi
-    if [ "$INSTALL_GUI" -eq 1 ]; then
+    if [ "$INSTALL_GUI" -eq 1 ] && [ "$SYSTEM_GUI" -eq 1 ]; then
+        install_gui_systemwide
+        [ "$FRESH_INSTALL" -eq 0 ] || system_gui_next_steps
+    elif [ "$INSTALL_GUI" -eq 1 ] && [ "$USER_GUI" -eq 1 ]; then
         install_gui_system
         gui_next_steps "${GUI_ADMINS[0]}"
     fi
@@ -410,7 +482,7 @@ else
             exit 0
         fi
     fi
-    if [ "$INSTALL_GUI" -eq 1 ]; then
+    if [ "$INSTALL_GUI" -eq 1 ] && [ "$USER_GUI" -eq 1 ]; then
         log "Installing the GUI."
         "$current_tree/gui/scripts/backup-suite-gui-server" install
         gui_next_steps "$(id -un)"

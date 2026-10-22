@@ -33,12 +33,39 @@ What `install.sh` does:
   (adaptive or fixed), runs the tests first and rolls back on failure. A user install
   is refreshed with `setup.sh --refresh-scripts --refresh-units`; its configuration
   is kept.
-- **GUI.** Installed as a systemd user service of the GUI admin: the user who ran
-  `sudo`, or `--gui-admin LOGIN`. In a system install it turns on linger for that
-  login, so the GUI runs while nobody is logged in. `--no-gui` skips it.
+- **GUI.** It never runs as root. By default a systemd user service of the GUI
+  admin: the user who ran `sudo`, or `--gui-admin LOGIN`; the installer sets it up
+  as that login and turns on linger, so the GUI runs while nobody is logged in.
+  `./install.sh --gui-only` (no sudo) installs or updates only your own GUI.
+  `sudo ./install.sh --gui-system` installs one system-wide GUI instead (a system
+  service run by the unprivileged account `backup-suite-gui`, for the members of the
+  group `backup-suite-gui`). `--no-gui` skips the GUI.
 
-Options: `--gui-admin LOGIN`, `--no-gui`, `--install-deps`, `--profile NAME`,
-`--floor NAME`, `--fixed`, `--stop-running`, `--dry-run` (first install only).
+Options: `--gui-admin LOGIN`, `--gui-only`, `--gui-system`, `--no-gui`,
+`--install-deps`, `--profile NAME`, `--floor NAME`, `--fixed`, `--stop-running`,
+`--dry-run` (first install only).
+
+### Updates
+
+After the first install, update from the GUI: **Admin → Updates** (the top bar
+shows **Update available** when a newer release is out). It updates Backup Suite
+first, then the GUI, from this project's GitHub releases:
+
+- Only the latest published release can be installed, never an older one, and the
+  download address is fixed in `bin/backup-suite-update.py`; the GUI cannot pass one.
+- The archive must match the SHA-256 published with it, and every file in it must
+  stay inside its folder; otherwise nothing is installed.
+- Backup Suite is updated by the release's own `install.sh` in a transient unit
+  (`backup-suite-update.service`, as root in a system install, started by the
+  control broker), so the update survives the GUI restarting. In a system install
+  that is `production-deploy.sh`: it waits for a running backup (or stops it, if
+  chosen), runs the tests, and rolls back on failure. The status and log are in
+  `<state>/updates/`.
+- Your GUI updates itself as your login (`backup-suite-gui-update.service`); if the
+  new GUI does not start, the previous copy (`~/.local/share/backup-suite-gui/app.previous`)
+  is put back. By hand: `~/.local/share/backup-suite-gui/app/scripts/backup-suite-gui-server rollback`.
+
+Running `install.sh` from a newer release still works as well.
 
 After installing, as the GUI admin:
 

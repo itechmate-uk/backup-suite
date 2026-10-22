@@ -785,6 +785,8 @@ mark { background: var(--warn-soft); color: var(--text); outline: 1px solid var(
 .job-form-grid input[type="text"], .job-form-grid select, .job-form-grid textarea { width: 100%; box-sizing: border-box; }
 
 #reload-button.update-available { background: var(--danger); border-color: var(--danger); color: var(--danger-text); }
+.update-button { border-color: var(--warn, #b45309); color: var(--warn, #b45309); font-weight: 600; }
+.update-log pre { max-height: 18rem; overflow: auto; }
 .channel-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
 .channel-head h3 { margin: 0; }
 .channel-card.is-disabled { opacity: 0.85; }

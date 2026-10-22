@@ -28,9 +28,10 @@ sudo ./install.sh --install-deps
 
 `install.sh` installs Backup Suite and its browser GUI, creates a starting
 configuration (no jobs, no destinations yet) and prints how to connect to the GUI;
-everything else is set up there. Run it again from a newer release to upgrade:
-configuration, credentials and the resource setup are kept. Without `sudo` it
-installs for your login only. Options: `./install.sh --help`; details in
+everything else is set up there. The GUI never runs as root (`./install.sh --gui-only`
+installs just your GUI, without sudo). Updates are installed from the GUI
+(Admin → Updates); configuration, credentials and the resource setup are kept.
+Without `sudo` it installs for your login only. Options: `./install.sh --help`; details in
 [docs/INSTALLATION.md](docs/INSTALLATION.md).
 
 ## Manual setup (without the installer)

@@ -100,6 +100,11 @@ async function main() {
   fs.mkdirSync(screenshotDir, { recursive: true });
   // A running backup, so the gauges and the running state render.
   fixture.env.FAKE_SYSTEMCTL_ACTIVE_UNIT = "file-backup.service";
+  // A fake newer release (file:// URLs), so the Updates tab and the notice render offline.
+  const releaseDir = path.join(fixture.root, "release");
+  require("child_process").execFileSync("python3", [path.join(__dirname, "..", "..", "..", "tests", "fixtures", "make-fake-release.py"), releaseDir, "9.9.9"]);
+  fixture.env.BACKUP_SUITE_UPDATE_LATEST_URL = `file://${releaseDir}/latest.json`;
+  fixture.env.BACKUP_SUITE_UPDATE_DOWNLOAD_BASE = `file://${releaseDir}/`;
   const { createApp } = require("../../server");
   const app = createApp({ env: fixture.env });
   const server = http.createServer(app.handle);
@@ -254,6 +259,15 @@ async function main() {
           if (!fs.readFileSync(path.join(fixture.configDir, "rclone.conf"), "utf8").includes("[offsite]")) failures.push("wizard: the remote was not written");
           await page.keyboard.press("Escape");
         }
+        // Updates: the notice in the top bar opens Admin -> Updates with both cards.
+        await page.goto(`${base}/#home`);
+        await page.waitForSelector("#update-button:not([hidden])", { timeout: 10000 });
+        await page.click("#update-button");
+        await page.waitForSelector('#admin-body h3:has-text("Latest release: 9.9.9")', { timeout: 15000 });
+        if (!(await page.$('#admin-body button:has-text("Update Backup Suite to 9.9.9")'))) failures.push(`${label}/${scheme}: no Backup Suite update button`);
+        if (!(await page.$('#admin-body button:has-text("Update GUI to 9.9.9")'))) failures.push(`${label}/${scheme}: no GUI update button`);
+        await page.screenshot({ path: path.join(screenshotDir, `${label}-${scheme}-updates.png`), fullPage: true });
+        await page.keyboard.press("Escape");
         // Dialogs.
         await page.goto(`${base}/#home`);
         await page.waitForTimeout(800);

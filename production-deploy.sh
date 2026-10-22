@@ -97,6 +97,11 @@ restore_previous_installation() {
         rm -rf "$INSTALL_DIR/bin"
         mv "$INSTALL_DIR/bin.deploy-restore" "$INSTALL_DIR/bin"
     fi
+    if [ -f "$BACKUP_DIR/VERSION" ]; then
+        cp -a "$BACKUP_DIR/VERSION" "$INSTALL_DIR/VERSION"
+    else
+        rm -f "$INSTALL_DIR/VERSION"
+    fi
     if [ -f "$BACKUP_DIR/units/.absent-$CONTROL_SOCKET_UNIT" ]; then
         # A first broker install is undone by stopping it and removing its link;
         # this script never disables units (it must never touch the timer).
@@ -345,6 +350,9 @@ fi
 BACKUP_DIR="$STATE_DIR/deploy-backups/$RUN_ID"
 install -d -m 700 "$BACKUP_DIR" "$BACKUP_DIR/units"
 cp -a "$INSTALL_DIR/bin" "$BACKUP_DIR/install-bin"
+if [ -f "$INSTALL_DIR/VERSION" ]; then
+    cp -a "$INSTALL_DIR/VERSION" "$BACKUP_DIR/VERSION"
+fi
 cp -a "$(readlink -f "$GLOBAL_CONFIG")" "$BACKUP_DIR/global.conf"
 for unit_file in "${MANAGED_UNIT_FILES[@]}"; do
     if [ -f "$UNIT_DIR/$unit_file" ]; then
@@ -366,6 +374,10 @@ install -m 755 "$SOURCE_DIR"/bin/*.sh "$SOURCE_DIR"/bin/*.py "$CANONICAL_DIR/bin
 install -m 644 "$SOURCE_DIR"/systemd/*.template "$CANONICAL_DIR/systemd/"
 install -m 755 "$SOURCE_DIR/setup.sh" "$SOURCE_DIR/production-deploy.sh" "$SOURCE_DIR/production-file-backup-migrate.sh" "$CANONICAL_DIR/"
 install -m 644 "$SOURCE_DIR/README.md" "$INSTALL_DIR/README.md"
+if [ -f "$SOURCE_DIR/VERSION" ]; then
+    install -m 644 "$SOURCE_DIR/VERSION" "$INSTALL_DIR/VERSION"
+    install -m 644 "$SOURCE_DIR/VERSION" "$CANONICAL_DIR/VERSION"
+fi
 
 render_unit() {
     local template_file="$1"

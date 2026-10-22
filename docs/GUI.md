@@ -58,6 +58,18 @@ the acceptance checks are in [GUI-SPECIFICATION.md](GUI-SPECIFICATION.md).
   reload button turns red.
 - **Resource warning:** a popup when the server or the backup runs short, once per
   condition until it clears.
+- **Updates** (Admin → Updates, and an **Update available** button in the top bar):
+  Backup Suite and the GUI update themselves from this project's GitHub releases,
+  like agentw and agentw-gui. Only the latest published release can be installed;
+  its archive must match the SHA-256 published with it and every file must stay
+  inside its folder. **Backup Suite** is updated first, by its own installer in a
+  transient unit (`backup-suite-update.service`, as root in a system install): a
+  running backup is waited for (or stopped, if chosen), the tests run, and a failure
+  keeps the previous version. **The GUI** of a login updates itself as that login
+  (`backup-suite-gui-update.service`, no sudo) and restarts; if it does not come up,
+  the previous copy is put back. A system-wide GUI is updated with Backup Suite. The
+  GUI checks for releases every 6 hours (Settings → General → Updates; it only
+  checks, nothing installs without a confirmation).
 - ⚙ holds this GUI's own settings only.
 
 Per-job data comes from `file-backup.sh`: one row per project and run in
@@ -81,9 +93,18 @@ use the latest run's log.
 
 ## How it runs
 
-- The GUI is a Node.js server (standard library only, Node 18 or newer) that runs as
-  a **systemd user unit of the login that administers Backup Suite**:
-  `backup-suite-gui-4337.service`, like agentw-gui. It never runs as root.
+- The GUI is a Node.js server (standard library only, Node 18 or newer). It never
+  runs as root and never needs sudo. Two ways:
+  - **Per login** (default, like agentw-gui): a **systemd user unit of the login that
+    administers Backup Suite**, `backup-suite-gui-4337.service`. Install or update
+    it as that login: `./install.sh --gui-only` (no sudo).
+  - **System-wide** (optional): one system unit, `backup-suite-gui.service`, run by
+    the unprivileged account `backup-suite-gui`. Its socket
+    `/run/backup-suite-gui/gui.sock` is open to the group `backup-suite-gui` (the GUI
+    admins, the same group as the control broker): `sudo ./install.sh --gui-system`.
+    The broker then sees every change as made by `backup-suite-gui`; the audit log
+    cannot tell which admin made it. Tunnel Manager cannot start this unit; it always
+    runs.
 - It listens on a private Unix socket,
   `$XDG_RUNTIME_DIR/backup-suite-gui/gui-4337.sock` (0600 in a 0700 directory).
   TCP on 127.0.0.1 is opt-in (Settings → Tunnel Manager) and reachable by every local
@@ -108,7 +129,10 @@ the GUI), root-run programs and paths are read-only, and every change is audited
 ## Install
 
 From a release, `sudo ./install.sh` installs Backup Suite, the broker and the GUI in
-one go (see [INSTALLATION.md](INSTALLATION.md)). By hand:
+one go (see [INSTALLATION.md](INSTALLATION.md)); the GUI is installed as the login
+that ran sudo, never as root. `./install.sh --gui-only` (no sudo) installs or
+updates only your GUI; `sudo ./install.sh --gui-system` the system-wide GUI. After
+that, updates come from Admin → Updates. By hand:
 
 System mode (this server):
 

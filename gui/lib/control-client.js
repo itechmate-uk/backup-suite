@@ -33,7 +33,7 @@ const VERBS = {
   "events.stat": false, audit: false, jobs: false, job: false, "job.changes": false, "job.log": false,
   "job.measure": false, "job.check": false, "job.save": true, "job.enable": true, "job.remove": true, "job.run": true, "job.exclude": true,
   remotes: false, "remote.create": true, "remote.continue": true, "remote.test": false, "remote.delete": true,
-  "remote.browse": false, "fs.browse": false
+  "remote.browse": false, "fs.browse": false, "update.status": false, "update.apply": true
 };
 
 function homeDir(env) {

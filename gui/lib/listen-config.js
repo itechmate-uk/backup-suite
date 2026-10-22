@@ -56,6 +56,9 @@ function resolveListen({ env = process.env, settings } = {}) {
     socket: mode !== "tcp",
     tcp: mode !== "socket",
     forwardable: socketPathForwardable(socketPath),
+    // A system-wide GUI shares its socket with the group of GUI admins.
+    shared: Boolean(String(env.BACKUP_SUITE_GUI_SOCKET_GROUP || "").trim()),
+    system: String(env.BACKUP_SUITE_GUI_SYSTEM || "") === "1",
     warning: mode === "socket" ? "" : TCP_WARNING
   };
 }
@@ -65,9 +68,11 @@ function modeString(stat) {
 }
 
 // The socket's directory: 0700 and ours. A directory we own that is wider is
-// tightened to 0700; anything owned by someone else stops the start.
-function prepareSocketDirectory(dir) {
-  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+// tightened to 0700; anything owned by someone else stops the start. A shared
+// socket (the system-wide GUI) allows the directory's group to enter: 0750.
+function prepareSocketDirectory(dir, { shared = false } = {}) {
+  const allowed = shared ? 0o750 : 0o700;
+  fs.mkdirSync(dir, { recursive: true, mode: allowed });
   let stat = fs.lstatSync(dir);
   if (!stat.isDirectory()) throw new Error(`Refusing to listen: ${dir} is not a directory.`);
   const uid = typeof process.getuid === "function" ? process.getuid() : null;
@@ -75,12 +80,12 @@ function prepareSocketDirectory(dir) {
     throw new Error(`Refusing to listen: ${dir} belongs to another account (uid ${stat.uid}).`);
   }
   let tightenedFrom = "";
-  if ((stat.mode & 0o077) !== 0) {
+  if ((stat.mode & 0o777 & ~allowed) !== 0) {
     tightenedFrom = modeString(stat);
-    fs.chmodSync(dir, 0o700);
+    fs.chmodSync(dir, allowed);
     stat = fs.lstatSync(dir);
-    if ((stat.mode & 0o077) !== 0) {
-      throw new Error(`Refusing to listen: ${dir} is accessible to group or others (mode ${modeString(stat)}).`);
+    if ((stat.mode & 0o777 & ~allowed) !== 0) {
+      throw new Error(`Refusing to listen: ${dir} is accessible to others (mode ${modeString(stat)}).`);
     }
   }
   return { dir, mode: modeString(stat), tightenedFrom };
@@ -115,11 +120,14 @@ async function clearStaleSocket(socketPath) {
   return "removed-stale";
 }
 
-function confirmSocketPrivate(socketPath) {
-  fs.chmodSync(socketPath, 0o600);
+// 0600, or 0660 for a shared socket (its group is the service's group: the GUI
+// admins of a system-wide GUI).
+function confirmSocketPrivate(socketPath, { shared = false } = {}) {
+  const mode = shared ? 0o660 : 0o600;
+  fs.chmodSync(socketPath, mode);
   const stat = fs.lstatSync(socketPath);
   const uid = typeof process.getuid === "function" ? process.getuid() : null;
-  if (!stat.isSocket() || (stat.mode & 0o177) !== 0 || (uid !== null && stat.uid !== uid)) {
+  if (!stat.isSocket() || (stat.mode & 0o777 & ~mode) !== 0 || (uid !== null && stat.uid !== uid)) {
     throw new Error(`The GUI socket ${socketPath} is not private (mode ${modeString(stat)}).`);
   }
   return modeString(stat);

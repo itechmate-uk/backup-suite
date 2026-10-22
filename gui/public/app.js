@@ -2552,10 +2552,153 @@
     if (focusedKey) body.querySelector(`[data-key="${CSS.escape(focusedKey)}"]`)?.focus();
   }
 
+  // ------------------------------------------------------------------ updates
+  //
+  // Like agentw-gui's Updates panel: Backup Suite and this GUI, each with its version
+  // and the latest release; Backup Suite first, then the GUI. Nothing installs
+  // without a confirmation.
+
+  async function loadUpdates(force = false) {
+    const data = await api(`/api/updates${force ? "?force=1" : ""}`);
+    state.updates = data;
+    renderUpdateButton();
+    return data;
+  }
+
+  function renderUpdateButton() {
+    const data = state.updates;
+    const button = $("#update-button");
+    const running = data?.backend?.status?.state === "running" || data?.gui?.status?.state === "running";
+    const available = Boolean(data?.latest?.ok && (data.backend?.update_available || data.gui?.update_available));
+    button.hidden = !(available || running);
+    button.textContent = running ? "Updating…" : "Update available";
+    button.title = running ? "An update is being installed" : `Backup Suite ${data?.latest?.latest} is available`;
+  }
+
+  function updateStateNode(status) {
+    if (!status || status.state === "idle" || !status.state) return null;
+    if (status.state === "running") {
+      return h("div", { class: "notice info", role: "status" },
+        `Installing ${status.version} (${status.step === "download" ? "downloading and verifying" : "installing; a running backup is waited for, then the tests run"})…`);
+    }
+    if (status.state === "done") return h("div", { class: "notice ok", role: "status" }, `Version ${status.version} was installed ${status.finished_at || ""}.`);
+    if (status.state === "failed") return h("div", { class: "notice bad", role: "alert" }, `The update to ${status.version || "?"} failed: ${status.error || "see the log"}. The previous version stays in use.`);
+    return null;
+  }
+
+  function updateLogNode(status) {
+    if (!status?.log_tail) return null;
+    return h("details", { class: "update-log" }, h("summary", {}, "Installer log"), h("pre", { class: "log-view" }, status.log_tail));
+  }
+
+  let updatePollTimer = null;
+  function pollUpdatesWhileRunning() {
+    clearTimeout(updatePollTimer);
+    const running = state.updates?.backend?.status?.state === "running" || state.updates?.gui?.status?.state === "running";
+    if (!running) return;
+    updatePollTimer = setTimeout(async () => {
+      try {
+        await loadUpdates();
+      } catch {
+        // The GUI restarts during its own update; keep polling.
+      }
+      if (adminOpen() && state.adminTab === "updates") renderAdmin();
+      pollUpdatesWhileRunning();
+    }, 4000);
+  }
+
+  async function startUpdate(target, version, stopRunning = false) {
+    const backend = target === "backend";
+    const lines = backend
+      ? [
+        `Downloads Backup Suite ${version} from GitHub, checks it against its published SHA-256, then installs it${state.updates?.backend?.mode === "system" ? " as root" : ""}.`,
+        ["Your configuration, credentials, jobs and resource setup are kept.",
+          stopRunning ? "A running backup is stopped (its projects are redone next run)." : "A running backup is waited for, so this may take a while.",
+          "The tests run first; if anything fails, the previous version stays in use.",
+          state.updates?.gui?.system ? "This system-wide GUI is updated with it and restarts." : "This GUI is updated separately (Update GUI)."]
+      ]
+      : [`Downloads the GUI of Backup Suite ${version}, checks its SHA-256 and installs it for your login.`,
+        ["The GUI restarts; this page reconnects by itself. If the new GUI does not start, the previous one is put back."]];
+    if (!(await confirmAction({ title: backend ? `Update Backup Suite to ${version}?` : `Update the GUI to ${version}?`, lines, okLabel: "Update" }))) return;
+    try {
+      await api("/api/updates/apply", { method: "POST", body: { target, version, stop_running: stopRunning } });
+      toast(backend ? `Updating Backup Suite to ${version}…` : `Updating the GUI to ${version}; it restarts in a moment.`, "info", 8000);
+      await loadUpdates().catch(() => {});
+      if (adminOpen()) renderAdmin();
+      pollUpdatesWhileRunning();
+    } catch (error) {
+      toast(errorText(error), "error", 12000);
+    }
+  }
+
+  renderers.updates = async (body) => {
+    body.append(loadingNode("Checking for updates…"));
+    let data;
+    try {
+      data = await loadUpdates(false);
+    } catch (error) {
+      clear(body).append(errorNode(error));
+      return;
+    }
+    clear(body);
+    const latest = data.latest || {};
+    const latestVersion = latest.ok ? latest.latest : "";
+    const checkButton = h("button", { type: "button", onclick: async () => {
+      checkButton.disabled = true;
+      try {
+        await loadUpdates(true);
+      } catch (error) {
+        toast(errorText(error), "error");
+      }
+      renderAdmin();
+    } }, "Check now");
+    const both = data.backend.update_available && data.gui.update_available;
+    body.append(
+      h("p", { class: "muted" }, "Updates come from this project's releases on GitHub. Each download is checked against the SHA-256 published with it before anything is installed; only the latest release can be installed. Backup Suite is updated first, then the GUI."),
+      h("div", { class: "toolbar-row tight" }, checkButton,
+        both ? h("button", { type: "button", class: "primary-button", onclick: () => startUpdate("backend", latestVersion) }, "Update Backup Suite first") : null),
+      latest.ok
+        ? h("section", { class: "card" },
+          h("div", { class: "channel-head" }, h("h3", {}, `Latest release: ${latest.latest}`), latest.published_at ? pill(latest.published_at.slice(0, 10), "info") : null),
+          kv([["Checked", latest.checked_at || ""], ["Release page", latest.url ? h("a", { href: latest.url, target: "_blank", rel: "noopener noreferrer" }, latest.url) : ""]]),
+          latest.notes ? h("details", {}, h("summary", {}, "Release notes"), h("pre", { class: "log-view" }, latest.notes)) : null)
+        : h("div", { class: "notice bad", role: "alert" }, `Could not check for updates: ${latest.error || "unknown error"}`));
+
+    const backend = data.backend;
+    const backendCard = h("section", { class: "card" },
+      h("div", { class: "channel-head" }, h("h3", {}, "Backup Suite"),
+        backend.update_available ? pill(`${latestVersion} available`, "warn") : backend.supported ? pill("up to date", "ok") : pill("needs a manual update", "bad")),
+      kv([["Installed", backend.installed || "unknown"], ["Mode", backend.mode || ""]]),
+      backend.supported ? null : h("p", { class: "notice info" }, backend.error),
+      updateStateNode(backend.status), updateLogNode(backend.status));
+    if (backend.update_available && backend.status?.state !== "running") {
+      const stop = h("input", { type: "checkbox" });
+      backendCard.append(h("div", { class: "toolbar-row tight end" },
+        h("label", { class: "inline-check" }, stop, h("span", {}, "Stop a running backup instead of waiting")),
+        h("button", { type: "button", class: "primary-button", onclick: () => startUpdate("backend", latestVersion, stop.checked) }, `Update Backup Suite to ${latestVersion}…`)));
+    }
+
+    const gui = data.gui;
+    const guiCard = h("section", { class: "card" },
+      h("div", { class: "channel-head" }, h("h3", {}, gui.system ? "GUI (system-wide)" : "GUI (your login)"),
+        gui.update_available ? pill(`${latestVersion} available`, "warn") : pill(gui.system ? "updated with Backup Suite" : "up to date", "ok")),
+      kv([["Installed", gui.version], ["Runs as", gui.system ? "the system service backup-suite-gui.service" : "your user service"]]),
+      gui.updater || gui.system ? null : h("p", { class: "notice info" }, "This GUI has no updater yet: install it once more from a release (./install.sh --gui-only, no sudo)."),
+      updateStateNode(gui.status), updateLogNode(gui.status));
+    if (gui.update_available && gui.updater && gui.status?.state !== "running") {
+      guiCard.append(h("div", { class: "toolbar-row tight end" },
+        h("button", { type: "button", class: "primary-button", disabled: backend.status?.state === "running", onclick: () => startUpdate("gui", latestVersion) }, `Update GUI to ${latestVersion}…`)));
+    }
+    body.append(h("div", { class: "cards" }, backendCard, guiCard),
+      h("p", { class: "muted" }, data.auto_check ? "Checked automatically every 6 hours (Settings → General)." : "Automatic checks are off (Settings → General)."));
+    pollUpdatesWhileRunning();
+  };
+
   // ------------------------------------------------------------------ admin
 
   const ADMIN_TABS = {
     actions: "Actions & schedule",
+    updates: "Updates",
     destinations: "Destinations",
     runs: "Runs & failures",
     profiles: "Profiles & limits",
@@ -2912,7 +3055,7 @@
 
   function readSettingsForm() {
     const form = $("#settings-form");
-    const update = { general: {}, notifications: { categories: {} }, tunnel: {}, limits: {} };
+    const update = { general: {}, notifications: { categories: {} }, tunnel: {}, limits: {}, updates: {} };
     for (const element of form.querySelectorAll("[name]")) {
       if (element.name.startsWith("category.")) {
         update.notifications.categories[element.name.slice(9)] = element.checked;
@@ -3098,6 +3241,7 @@
 
   function bindChrome() {
     $("#reload-button").addEventListener("click", () => location.reload());
+    $("#update-button").addEventListener("click", () => openAdmin("updates"));
     $("#settings-button").addEventListener("click", openSettings);
     $("#connect-button").addEventListener("click", openConnect);
     $("#reset-panels-button").addEventListener("click", () => {
@@ -3246,6 +3390,11 @@
       // Each section loads what it needs on its own.
     }
     if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
+    // The update notice: the server's cached check (it checks every 6 hours when
+    // automatic checks are on), read again every hour.
+    const refreshUpdates = () => loadUpdates(false).then(pollUpdatesWhileRunning).catch(() => {});
+    setTimeout(refreshUpdates, 2000);
+    setInterval(refreshUpdates, 60 * 60 * 1000);
   }
 
   init();
