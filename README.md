@@ -175,3 +175,10 @@ This repository is intended to contain example configuration only.
 - do not commit real credentials or runtime config
 - do not commit live `rclone.conf`
 - do not commit real database profile files
+
+## License
+
+Backup Suite is licensed under the [Apache License, Version 2.0](LICENSE).
+If you redistribute it or software derived from it, keep the [NOTICE](NOTICE) file
+and credit the original project: "Based on Backup Suite
+(https://github.com/itechmate-uk/backup-suite)".

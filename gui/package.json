@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "description": "Browser GUI for Backup Suite, reached through an SSH tunnel (Tunnel Manager).",
+  "license": "Apache-2.0",
   "main": "server.js",
   "engines": {
     "node": ">=18"

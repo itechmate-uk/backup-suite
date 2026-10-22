@@ -31,3 +31,8 @@ bash -n bin/*.sh
 - describe the problem being solved
 - note any operational impact
 - include the commands used for validation when relevant
+
+## License
+
+By contributing you agree that your contributions are licensed under the
+[Apache License, Version 2.0](LICENSE), like the rest of Backup Suite.
