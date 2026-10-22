@@ -28,6 +28,9 @@ jobs:
         with:
           node-version: "20"
 
+      - name: Install rclone (the control script the GUI tests run needs it)
+        run: sudo apt-get update && sudo apt-get install -y rclone
+
       - name: Check the source
         run: |
           bash -n install.sh setup.sh production-deploy.sh production-file-backup-migrate.sh bin/*.sh tests/run.sh gui/scripts/backup-suite-gui-server gui/scripts/backup-suite-gui-watchdog
