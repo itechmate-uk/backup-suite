@@ -66,8 +66,9 @@ Options: `--gui-admin LOGIN`, `--gui-only`, `--gui-system`, `--no-gui`,
 
 ### Updates
 
-After the first install, update from the GUI: **Admin → Updates** (the top bar
-shows **Update available** when a newer release is out). It updates Backup Suite
+After the first install, update from the GUI: the top-bar button says **Up to
+date**, or in amber **Update available**; it opens the Updates window, where
+**Update everything** updates Backup Suite and then the GUI. It updates Backup Suite
 first, then the GUI, from this project's GitHub releases:
 
 - Only the latest published release can be installed, never an older one, and the

@@ -2554,25 +2554,53 @@
 
   // ------------------------------------------------------------------ updates
   //
-  // Like agentw-gui's Updates panel: Backup Suite and this GUI, each with its version
-  // and the latest release; Backup Suite first, then the GUI. Nothing installs
-  // without a confirmation.
+  // Like agentw-gui: a top-bar button that says "Up to date", or in amber "Update
+  // available", and opens the Updates window. Backup Suite is updated first, then
+  // this GUI; "Update everything" does both in that order and reloads the page on
+  // the new GUI. Nothing installs without a confirmation.
 
   async function loadUpdates(force = false) {
     const data = await api(`/api/updates${force ? "?force=1" : ""}`);
     state.updates = data;
     renderUpdateButton();
+    if ($("#update-dialog").open) renderUpdateDialog();
     return data;
+  }
+
+  // Backup Suite before 1.1 has no updater of its own: it needs one update by hand.
+  function backendNeedsManualUpdate(data) {
+    return Boolean(data?.latest?.ok && data.backend && data.backend.supported === false && data.backend.code === "invalid_request");
+  }
+
+  function updatesRunning(data) {
+    return data?.backend?.status?.state === "running" || data?.gui?.status?.state === "running" || Boolean(state.updateAll);
+  }
+
+  function updatesAvailable(data) {
+    return Boolean(data?.latest?.ok && (data.backend?.update_available || data.gui?.update_available || backendNeedsManualUpdate(data)));
   }
 
   function renderUpdateButton() {
     const data = state.updates;
     const button = $("#update-button");
-    const running = data?.backend?.status?.state === "running" || data?.gui?.status?.state === "running";
-    const available = Boolean(data?.latest?.ok && (data.backend?.update_available || data.gui?.update_available));
-    button.hidden = !(available || running);
-    button.textContent = running ? "Updating…" : "Update available";
-    button.title = running ? "An update is being installed" : `Backup Suite ${data?.latest?.latest} is available`;
+    button.classList.remove("is-available", "is-running", "is-unknown");
+    if (updatesRunning(data)) {
+      button.textContent = "Updating…";
+      button.classList.add("is-running");
+      button.title = "An update is being installed; click to follow it";
+    } else if (updatesAvailable(data)) {
+      button.textContent = "Update available";
+      button.classList.add("is-available");
+      button.title = `Backup Suite ${data.latest.latest} is available; click to update`;
+    } else if (data?.latest?.ok) {
+      button.textContent = "Up to date";
+      button.title = `Backup Suite and this GUI are up to date (${data.latest.latest}); click to check again`;
+    } else {
+      button.textContent = "Update check";
+      button.classList.add("is-unknown");
+      button.title = data?.latest?.error ? `Could not check for updates: ${data.latest.error}` : "Check for updates";
+    }
+    button.setAttribute("aria-label", button.title);
   }
 
   function updateStateNode(status) {
@@ -2591,114 +2619,214 @@
     return h("details", { class: "update-log" }, h("summary", {}, "Installer log"), h("pre", { class: "log-view" }, status.log_tail));
   }
 
+  // The one manual update of a Backup Suite older than 1.1, as commands to copy.
+  function manualUpdateNode(version) {
+    const name = `backup-suite-${version}`;
+    const base = `https://github.com/itechmate-uk/backup-suite/releases/download/v${version}`;
+    const system = state.updates?.backend?.mode !== "user" && state.session?.backend?.mode !== "user";
+    const command = [
+      `cd "$(mktemp -d)"`,
+      `curl -fLO ${base}/${name}.tar.gz && curl -fLO ${base}/${name}.tar.gz.sha256`,
+      `sha256sum -c ${name}.tar.gz.sha256 && tar -xzf ${name}.tar.gz`,
+      `${system ? "sudo " : ""}${name}/install.sh --no-user-gui`
+    ].join("\n");
+    const copy = h("button", { type: "button", onclick: async () => {
+      try {
+        await navigator.clipboard.writeText(command);
+        toast("Commands copied.", "info");
+      } catch {
+        toast("Copying is not allowed here; select the commands and copy them.", "warn");
+      }
+    } }, "Copy");
+    return h("div", { class: "notice info" },
+      h("p", {}, `Backup Suite on this server is older than 1.1, which brought updates from the GUI, so it needs this one update by hand. Run these commands on the server${system ? " (sudo asks for your password)" : ""}; afterwards Backup Suite updates from here, without a password:`),
+      h("div", { class: "update-command" }, h("code", {}, command), copy),
+      h("p", { class: "muted" }, "They download the release, check its SHA-256 and run its installer, which keeps your configuration, waits for a running backup, runs the tests and rolls back on failure."));
+  }
+
   let updatePollTimer = null;
   function pollUpdatesWhileRunning() {
     clearTimeout(updatePollTimer);
-    const running = state.updates?.backend?.status?.state === "running" || state.updates?.gui?.status?.state === "running";
-    if (!running) return;
+    if (!updatesRunning(state.updates)) return;
     updatePollTimer = setTimeout(async () => {
       try {
         await loadUpdates();
+        await continueUpdateAll();
       } catch {
         // The GUI restarts during its own update; keep polling.
       }
-      if (adminOpen() && state.adminTab === "updates") renderAdmin();
       pollUpdatesWhileRunning();
     }, 4000);
   }
 
-  async function startUpdate(target, version, stopRunning = false) {
-    const backend = target === "backend";
-    const lines = backend
-      ? [
-        `Downloads Backup Suite ${version} from GitHub, checks it against its published SHA-256, then installs it${state.updates?.backend?.mode === "system" ? " as root" : ""}.`,
-        ["Your configuration, credentials, jobs and resource setup are kept.",
-          stopRunning ? "A running backup is stopped (its projects are redone next run)." : "A running backup is waited for, so this may take a while.",
-          "The tests run first; if anything fails, the previous version stays in use.",
-          state.updates?.gui?.system ? "This system-wide GUI is updated with it and restarts." : "This GUI is updated separately (Update GUI)."]
-      ]
-      : [`Downloads the GUI of Backup Suite ${version}, checks its SHA-256 and installs it for your login.`,
-        ["The GUI restarts; this page reconnects by itself. If the new GUI does not start, the previous one is put back."]];
-    if (!(await confirmAction({ title: backend ? `Update Backup Suite to ${version}?` : `Update the GUI to ${version}?`, lines, okLabel: "Update" }))) return;
-    try {
-      await api("/api/updates/apply", { method: "POST", body: { target, version, stop_running: stopRunning } });
-      toast(backend ? `Updating Backup Suite to ${version}…` : `Updating the GUI to ${version}; it restarts in a moment.`, "info", 8000);
-      await loadUpdates().catch(() => {});
-      if (adminOpen()) renderAdmin();
-      pollUpdatesWhileRunning();
-    } catch (error) {
-      toast(errorText(error), "error", 12000);
+  // "Update everything": once Backup Suite is updated, update the GUI.
+  async function continueUpdateAll() {
+    const plan = state.updateAll;
+    const data = state.updates;
+    if (!plan || !data || data.backend?.status?.state === "running") return;
+    if (plan.step === "backend") {
+      if (data.backend?.status?.state === "failed") {
+        state.updateAll = null;
+        toast("The Backup Suite update failed; the GUI was not updated. The previous versions stay in use.", "error", 12000);
+        renderUpdateButton();
+        return;
+      }
+      if (data.gui?.update_available) {
+        plan.step = "gui";
+        await startUpdate("gui", plan.version, false, { confirm: false });
+      } else {
+        state.updateAll = null;
+        toast(`Backup Suite ${plan.version} is installed.`, "info", 8000);
+        renderUpdateButton();
+      }
     }
   }
 
-  renderers.updates = async (body) => {
-    body.append(loadingNode("Checking for updates…"));
-    let data;
+  // After this GUI's update: wait for the new GUI, then load it.
+  function reloadOnNewGui(version) {
+    const deadline = Date.now() + 3 * 60 * 1000;
+    const tick = async () => {
+      try {
+        const response = await fetch("/api/health", { cache: "no-store" });
+        const health = await response.json();
+        if (health.version === version) {
+          toast(`The GUI ${version} is running; reloading.`, "info");
+          setTimeout(() => location.reload(), 1200);
+          return;
+        }
+      } catch {
+        // restarting
+      }
+      if (Date.now() < deadline) setTimeout(tick, 3000);
+      else toast("The GUI did not come back with the new version; open Updates for the result.", "warn", 12000);
+    };
+    setTimeout(tick, 5000);
+  }
+
+  async function startUpdate(target, version, stopRunning = false, { confirm = true } = {}) {
+    const backend = target === "backend";
+    if (confirm) {
+      const lines = backend
+        ? [
+          `Downloads Backup Suite ${version} from GitHub, checks it against its published SHA-256, then installs it${state.updates?.backend?.mode === "system" ? " as root" : ""}.`,
+          ["Your configuration, credentials, jobs and resource setup are kept.",
+            stopRunning ? "A running backup is stopped (its projects are redone next run)." : "A running backup is waited for, so this may take a while.",
+            "The tests run first; if anything fails, the previous version stays in use.",
+            state.updates?.gui?.system ? "This system-wide GUI is updated with it and restarts." : "This GUI is updated separately (Update GUI, or Update everything)."]
+        ]
+        : [`Downloads the GUI of Backup Suite ${version}, checks its SHA-256 and installs it for your login.`,
+          ["The GUI restarts; this page reloads by itself. If the new GUI does not start, the previous one is put back."]];
+      if (!(await confirmAction({ title: backend ? `Update Backup Suite to ${version}?` : `Update the GUI to ${version}?`, lines, okLabel: "Update" }))) return false;
+    }
     try {
-      data = await loadUpdates(false);
+      await api("/api/updates/apply", { method: "POST", body: { target, version, stop_running: stopRunning } });
+      toast(backend ? `Updating Backup Suite to ${version}…` : `Updating the GUI to ${version}; it restarts in a moment.`, "info", 8000);
+      if (!backend) reloadOnNewGui(version);
+      await loadUpdates().catch(() => {});
+      pollUpdatesWhileRunning();
+      return true;
     } catch (error) {
-      clear(body).append(errorNode(error));
+      state.updateAll = null;
+      renderUpdateButton();
+      toast(errorText(error), "error", 12000);
+      return false;
+    }
+  }
+
+  async function updateEverything(version, stopRunning) {
+    const data = state.updates;
+    const steps = [];
+    if (data.backend?.update_available) steps.push(`Backup Suite ${data.backend.installed} → ${version}${data.backend.mode === "system" ? " (as root, through the control service)" : ""}: configuration, credentials, jobs and resource setup are kept; ${stopRunning ? "a running backup is stopped" : "a running backup is waited for"}; the tests run first and a failure keeps the previous version.`);
+    if (data.gui?.update_available) steps.push(`Then this GUI ${data.gui.version} → ${version}, for your login: it restarts and this page reloads; if it does not start, the previous GUI is put back.`);
+    if (!(await confirmAction({ title: `Update everything to ${version}?`, lines: ["Downloads the release from GitHub and checks it against its published SHA-256 before anything is installed.", steps], okLabel: "Update everything" }))) return;
+    if (data.backend?.update_available) {
+      state.updateAll = { version, step: "backend" };
+      renderUpdateButton();
+      await startUpdate("backend", version, stopRunning, { confirm: false });
+    } else {
+      await startUpdate("gui", version, false, { confirm: false });
+    }
+  }
+
+  function openUpdates() {
+    const dialog = $("#update-dialog");
+    if (!dialog.open) dialog.showModal();
+    renderUpdateDialog();
+    loadUpdates(false).catch((error) => {
+      clear($("#update-body")).append(errorNode(error));
+    });
+  }
+
+  function renderUpdateDialog() {
+    const body = $("#update-body");
+    const data = state.updates;
+    if (!data) {
+      clear(body).append(loadingNode("Checking for updates…"));
       return;
     }
-    clear(body);
     const latest = data.latest || {};
     const latestVersion = latest.ok ? latest.latest : "";
-    const checkButton = h("button", { type: "button", onclick: async () => {
+    const backend = data.backend || {};
+    const gui = data.gui || {};
+    const running = updatesRunning(data);
+    const checkButton = h("button", { type: "button", disabled: running, onclick: async () => {
       checkButton.disabled = true;
+      checkButton.textContent = "Checking…";
       try {
         await loadUpdates(true);
       } catch (error) {
         toast(errorText(error), "error");
+        renderUpdateDialog();
       }
-      renderAdmin();
     } }, "Check now");
-    const both = data.backend.update_available && data.gui.update_available;
-    body.append(
-      h("p", { class: "muted" }, "Updates come from this project's releases on GitHub. Each download is checked against the SHA-256 published with it before anything is installed; only the latest release can be installed. Backup Suite is updated first, then the GUI."),
-      h("div", { class: "toolbar-row tight" }, checkButton,
-        both ? h("button", { type: "button", class: "primary-button", onclick: () => startUpdate("backend", latestVersion) }, "Update Backup Suite first") : null),
+    const stopRunning = h("input", { type: "checkbox" });
+    const everything = (backend.update_available || gui.update_available) && !running
+      ? h("div", { class: "toolbar-row tight end" },
+        backend.update_available ? h("label", { class: "inline-check" }, stopRunning, h("span", {}, "Stop a running backup instead of waiting")) : null,
+        h("button", { type: "button", class: "primary-button", onclick: () => updateEverything(latestVersion, stopRunning.checked) },
+          backend.update_available && gui.update_available ? `Update everything to ${latestVersion}…` : backend.update_available ? `Update Backup Suite to ${latestVersion}…` : `Update the GUI to ${latestVersion}…`))
+      : null;
+
+    const backendCard = h("section", { class: "card" },
+      h("div", { class: "channel-head" }, h("h3", {}, "Backup Suite"),
+        backend.update_available ? pill(`${latestVersion} available`, "warn")
+          : backendNeedsManualUpdate(data) ? pill(`${latestVersion} available`, "warn")
+            : backend.supported ? pill("up to date", "ok") : pill("unknown", "")),
+      kv([["Installed", backend.installed || (backendNeedsManualUpdate(data) ? "older than 1.1" : "unknown")], ["Runs", backend.mode === "system" ? "system-wide, as root" : backend.mode === "user" ? "for your login" : (state.session?.backend?.label || "")]]),
+      backendNeedsManualUpdate(data) ? manualUpdateNode(latestVersion) : backend.supported ? null : h("p", { class: "notice info" }, backend.error || "Backup Suite could not be reached."),
+      updateStateNode(backend.status), updateLogNode(backend.status),
+      backend.update_available && !running
+        ? h("div", { class: "toolbar-row tight end" }, h("button", { type: "button", onclick: () => startUpdate("backend", latestVersion, stopRunning.checked) }, "Only Backup Suite…"))
+        : null);
+
+    const guiCard = h("section", { class: "card" },
+      h("div", { class: "channel-head" }, h("h3", {}, gui.system ? "GUI (system-wide)" : "GUI (your login)"),
+        gui.update_available ? pill(`${latestVersion} available`, "warn") : pill(gui.system ? "updated with Backup Suite" : "up to date", "ok")),
+      kv([["Installed", gui.version || ""], ["Runs as", gui.system ? "the system service backup-suite-gui.service" : "your user service, no root"]]),
+      gui.updater || gui.system ? null : h("p", { class: "notice info" }, "This GUI has no updater yet: install it once more from a release (./install.sh --gui-only, no sudo)."),
+      updateStateNode(gui.status), updateLogNode(gui.status),
+      gui.update_available && gui.updater && !running
+        ? h("div", { class: "toolbar-row tight end" }, h("button", { type: "button", onclick: () => startUpdate("gui", latestVersion) }, "Only the GUI…"))
+        : null);
+
+    clear(body).append(
       latest.ok
         ? h("section", { class: "card" },
           h("div", { class: "channel-head" }, h("h3", {}, `Latest release: ${latest.latest}`), latest.published_at ? pill(latest.published_at.slice(0, 10), "info") : null),
           kv([["Checked", latest.checked_at || ""], ["Release page", latest.url ? h("a", { href: latest.url, target: "_blank", rel: "noopener noreferrer" }, latest.url) : ""]]),
           latest.notes ? h("details", {}, h("summary", {}, "Release notes"), h("pre", { class: "log-view" }, latest.notes)) : null)
-        : h("div", { class: "notice bad", role: "alert" }, `Could not check for updates: ${latest.error || "unknown error"}`));
-
-    const backend = data.backend;
-    const backendCard = h("section", { class: "card" },
-      h("div", { class: "channel-head" }, h("h3", {}, "Backup Suite"),
-        backend.update_available ? pill(`${latestVersion} available`, "warn") : backend.supported ? pill("up to date", "ok") : pill("needs a manual update", "bad")),
-      kv([["Installed", backend.installed || "unknown"], ["Mode", backend.mode || ""]]),
-      backend.supported ? null : h("p", { class: "notice info" }, backend.error),
-      updateStateNode(backend.status), updateLogNode(backend.status));
-    if (backend.update_available && backend.status?.state !== "running") {
-      const stop = h("input", { type: "checkbox" });
-      backendCard.append(h("div", { class: "toolbar-row tight end" },
-        h("label", { class: "inline-check" }, stop, h("span", {}, "Stop a running backup instead of waiting")),
-        h("button", { type: "button", class: "primary-button", onclick: () => startUpdate("backend", latestVersion, stop.checked) }, `Update Backup Suite to ${latestVersion}…`)));
-    }
-
-    const gui = data.gui;
-    const guiCard = h("section", { class: "card" },
-      h("div", { class: "channel-head" }, h("h3", {}, gui.system ? "GUI (system-wide)" : "GUI (your login)"),
-        gui.update_available ? pill(`${latestVersion} available`, "warn") : pill(gui.system ? "updated with Backup Suite" : "up to date", "ok")),
-      kv([["Installed", gui.version], ["Runs as", gui.system ? "the system service backup-suite-gui.service" : "your user service"]]),
-      gui.updater || gui.system ? null : h("p", { class: "notice info" }, "This GUI has no updater yet: install it once more from a release (./install.sh --gui-only, no sudo)."),
-      updateStateNode(gui.status), updateLogNode(gui.status));
-    if (gui.update_available && gui.updater && gui.status?.state !== "running") {
-      guiCard.append(h("div", { class: "toolbar-row tight end" },
-        h("button", { type: "button", class: "primary-button", disabled: backend.status?.state === "running", onclick: () => startUpdate("gui", latestVersion) }, `Update GUI to ${latestVersion}…`)));
-    }
-    body.append(h("div", { class: "cards" }, backendCard, guiCard),
-      h("p", { class: "muted" }, data.auto_check ? "Checked automatically every 6 hours (Settings → General)." : "Automatic checks are off (Settings → General)."));
+        : h("div", { class: "notice bad", role: "alert" }, `Could not check for updates: ${latest.error || "unknown error"}`),
+      everything,
+      h("div", { class: "cards" }, backendCard, guiCard),
+      h("div", { class: "toolbar-row tight" }, checkButton,
+        h("span", { class: "muted" }, `${data.auto_check ? "Checked automatically every 6 hours" : "Automatic checks are off"} (Settings → General). Updates come only from this project's GitHub releases, checked against their SHA-256.`)));
     pollUpdatesWhileRunning();
-  };
+  }
 
   // ------------------------------------------------------------------ admin
 
   const ADMIN_TABS = {
     actions: "Actions & schedule",
-    updates: "Updates",
     destinations: "Destinations",
     runs: "Runs & failures",
     profiles: "Profiles & limits",
@@ -3241,7 +3369,8 @@
 
   function bindChrome() {
     $("#reload-button").addEventListener("click", () => location.reload());
-    $("#update-button").addEventListener("click", () => openAdmin("updates"));
+    $("#update-button").addEventListener("click", openUpdates);
+    $("#update-close").addEventListener("click", () => $("#update-dialog").close());
     $("#settings-button").addEventListener("click", openSettings);
     $("#connect-button").addEventListener("click", openConnect);
     $("#reset-panels-button").addEventListener("click", () => {
@@ -3392,7 +3521,7 @@
     if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
     // The update notice: the server's cached check (it checks every 6 hours when
     // automatic checks are on), read again every hour.
-    const refreshUpdates = () => loadUpdates(false).then(pollUpdatesWhileRunning).catch(() => {});
+    const refreshUpdates = () => loadUpdates(false).then(pollUpdatesWhileRunning).catch(() => renderUpdateButton());
     setTimeout(refreshUpdates, 2000);
     setInterval(refreshUpdates, 60 * 60 * 1000);
   }

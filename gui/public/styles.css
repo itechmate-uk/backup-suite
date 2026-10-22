@@ -785,7 +785,15 @@ mark { background: var(--warn-soft); color: var(--text); outline: 1px solid var(
 .job-form-grid input[type="text"], .job-form-grid select, .job-form-grid textarea { width: 100%; box-sizing: border-box; }
 
 #reload-button.update-available { background: var(--danger); border-color: var(--danger); color: var(--danger-text); }
-.update-button { border-color: var(--warn, #b45309); color: var(--warn, #b45309); font-weight: 600; }
+/* Like agentw-gui's update button: teal while up to date, amber when a release is out. */
+.update-button { border-color: var(--accent); color: var(--accent); }
+.update-button.is-available { background: var(--warn); border-color: var(--warn); color: var(--panel-strong); font-weight: 600; }
+.update-button.is-running { border-color: var(--warn); color: var(--warn); font-weight: 600; }
+.update-button.is-unknown { color: var(--muted); border-color: var(--border); }
+.dialog.update-dialog { width: min(52rem, calc(100vw - 1.5rem)); max-height: min(56rem, calc(100vh - 1.5rem)); padding: 0.9rem; }
+.update-body { display: flex; flex-direction: column; gap: 0.75rem; overflow: auto; }
+.update-command { display: flex; gap: 0.5rem; align-items: flex-start; }
+.update-command code { flex: 1; white-space: pre-wrap; word-break: break-all; }
 .update-log pre { max-height: 18rem; overflow: auto; }
 .channel-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
 .channel-head h3 { margin: 0; }

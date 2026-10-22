@@ -8,12 +8,15 @@ SHA-256 published with it, and every file in it must stay inside its
 top-level folder.
 
     backup-suite-update.py check  --current VERSION
-    backup-suite-update.py apply  --version VERSION --state-dir DIR [--stop-running]
+    backup-suite-update.py apply  --version VERSION [--state-dir DIR] [--stop-running]
         updates Backup Suite: runs the release's install.sh (as root: the
         system install and a system-wide GUI; as a user: the user install)
-    backup-suite-update.py gui-apply --version VERSION --state-dir DIR
+    backup-suite-update.py gui-apply --version VERSION [--state-dir DIR]
         updates this login's GUI: runs the release's backup-suite-gui-server install
-    backup-suite-update.py status --state-dir DIR
+    backup-suite-update.py status [--state-dir DIR]
+
+Without --state-dir: /var/lib/backup-suite/updates as root, else
+~/.local/state/backup-suite/updates (Backup Suite's default state folders).
 
 Every command prints one JSON object. Standard library only.
 """
@@ -360,6 +363,14 @@ def apply_update(version, state_dir, what, stop_running=False):
     return status
 
 
+def default_state_dir():
+    """Backup Suite's own update folder: the system one as root, else the user's."""
+    if os.getuid() == 0:
+        return "/var/lib/backup-suite/updates"
+    base = os.environ.get("XDG_STATE_HOME") or os.path.join(os.path.expanduser("~"), ".local", "state")
+    return os.path.join(base, "backup-suite", "updates")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Backup Suite updater")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -368,12 +379,14 @@ def main():
     for name in ("apply", "gui-apply"):
         apply_parser = sub.add_parser(name)
         apply_parser.add_argument("--version", required=True)
-        apply_parser.add_argument("--state-dir", required=True)
+        apply_parser.add_argument("--state-dir", default="")
         if name == "apply":
             apply_parser.add_argument("--stop-running", action="store_true")
     status_parser = sub.add_parser("status")
-    status_parser.add_argument("--state-dir", required=True)
+    status_parser.add_argument("--state-dir", default="")
     args = parser.parse_args()
+    if not args.command == "check" and not args.state_dir:
+        args.state_dir = default_state_dir()
     os.umask(0o022)
     try:
         if args.command == "check":

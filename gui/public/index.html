@@ -24,7 +24,7 @@
       <button id="reload-button" class="icon-button" type="button" title="Reload the GUI" aria-label="Reload the GUI">&#10227;</button>
       <button id="settings-button" class="icon-button" type="button" title="Settings" aria-label="Settings">&#9881;</button>
       <button id="admin-button" type="button" title="Backup Suite administration: actions, schedule, profiles, watchdog, ntfy, server settings, runs, logs and audit">Admin</button>
-      <button id="update-button" type="button" class="update-button" title="A newer Backup Suite release is available" hidden>Update available</button>
+      <button id="update-button" type="button" class="update-button" title="Updates for Backup Suite and this GUI">Update check</button>
       <button id="connect-button" class="icon-button" type="button" title="Ways to connect to this GUI" aria-label="Ways to connect to this GUI">&#8681;</button>
       <button id="reset-panels-button" type="button" title="Reset panels to the default arrangement">Reset Panels</button>
       <div class="runtime-label" title="Backup Suite install mode this GUI manages">
@@ -285,6 +285,20 @@
       </div>
       <div id="connect-body"><p class="muted">Loading…</p></div>
     </form>
+  </dialog>
+
+  <dialog id="update-dialog" class="dialog update-dialog" aria-labelledby="update-title">
+    <div class="dialog-header">
+      <div>
+        <p class="eyebrow">Backup Suite and this GUI</p>
+        <h2 id="update-title">Updates</h2>
+      </div>
+      <div class="titlebar-actions">
+        <button class="help-button" type="button" data-help="updates" aria-label="Help: updates">?</button>
+        <button class="icon-button small" type="button" id="update-close" aria-label="Close updates">&#10005;</button>
+      </div>
+    </div>
+    <section class="update-body" id="update-body" aria-live="polite"></section>
   </dialog>
 
   <dialog id="admin-dialog" class="dialog admin-dialog" aria-labelledby="admin-title">

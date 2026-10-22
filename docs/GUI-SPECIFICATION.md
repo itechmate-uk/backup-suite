@@ -647,8 +647,8 @@ production-deploy.sh and setup.sh).
   which runs the release's `install.sh --no-user-gui`. Audited.
 - GUI: `GET /api/updates[?force=1]`, `POST /api/updates/apply` (`target` gui or
   backend); its own update runs in `backup-suite-gui-update.service` as the login,
-  with a health check and rollback to `app.previous`. Admin → Updates, top-bar
-  **Update available**, setting `updates.autoCheck` (every 6 hours).
+  with a health check and rollback to `app.previous`. Updates window from the
+  top-bar button, setting `updates.autoCheck` (every 6 hours).
 - The GUI is installed as the admin login (never root); `install.sh --gui-only`
   without sudo. `install.sh --gui-system` / `backup-suite-gui-server install --system`:
   system unit `backup-suite-gui.service`, account `backup-suite-gui`, socket
@@ -656,3 +656,14 @@ production-deploy.sh and setup.sh).
   `backup-suite-gui`.
 - `production-deploy.sh` and `setup.sh` install `VERSION`; the deploy restores it on
   rollback.
+
+## Revision 9 (2026-10-22): updates out of Admin
+
+- The top-bar button is always shown, like agentw-gui's: **Up to date** (accent
+  outline), **Update available** (amber), **Updating…**, or **Update check** when the
+  check failed. It opens the Updates window (no longer an Admin tab).
+- **Update everything**: Backup Suite first (control verb `update.apply`), then, when
+  it finished, this GUI; the page reloads when `/api/health` reports the new version.
+  A failed Backup Suite update stops before the GUI.
+- A Backup Suite older than 1.1 (no `update.*` verbs) shows the commands for its one
+  manual update, with Copy. The GUI never asks for or handles a sudo password.

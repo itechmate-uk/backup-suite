@@ -259,13 +259,16 @@ async function main() {
           if (!fs.readFileSync(path.join(fixture.configDir, "rclone.conf"), "utf8").includes("[offsite]")) failures.push("wizard: the remote was not written");
           await page.keyboard.press("Escape");
         }
-        // Updates: the notice in the top bar opens Admin -> Updates with both cards.
+        // Updates: the top-bar button turns amber ("Update available") and opens the
+        // Updates window (not Admin) with Update everything and both parts.
         await page.goto(`${base}/#home`);
-        await page.waitForSelector("#update-button:not([hidden])", { timeout: 10000 });
+        await page.waitForSelector("#update-button.is-available", { timeout: 15000 });
+        if ((await page.textContent("#update-button")).trim() !== "Update available") failures.push(`${label}/${scheme}: update button text`);
         await page.click("#update-button");
-        await page.waitForSelector('#admin-body h3:has-text("Latest release: 9.9.9")', { timeout: 15000 });
-        if (!(await page.$('#admin-body button:has-text("Update Backup Suite to 9.9.9")'))) failures.push(`${label}/${scheme}: no Backup Suite update button`);
-        if (!(await page.$('#admin-body button:has-text("Update GUI to 9.9.9")'))) failures.push(`${label}/${scheme}: no GUI update button`);
+        await page.waitForSelector('#update-dialog[open] #update-body h3:has-text("Latest release: 9.9.9")', { timeout: 15000 });
+        if (!(await page.$('#update-body button:has-text("Update everything to 9.9.9")'))) failures.push(`${label}/${scheme}: no Update everything button`);
+        if (!(await page.$('#update-body button:has-text("Only Backup Suite")'))) failures.push(`${label}/${scheme}: no Backup Suite update button`);
+        if (!(await page.$('#update-body button:has-text("Only the GUI")'))) failures.push(`${label}/${scheme}: no GUI update button`);
         await page.screenshot({ path: path.join(screenshotDir, `${label}-${scheme}-updates.png`), fullPage: true });
         await page.keyboard.press("Escape");
         // Dialogs.

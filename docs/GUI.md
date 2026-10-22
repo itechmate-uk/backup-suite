@@ -58,7 +58,7 @@ the acceptance checks are in [GUI-SPECIFICATION.md](GUI-SPECIFICATION.md).
   reload button turns red.
 - **Resource warning:** a popup when the server or the backup runs short, once per
   condition until it clears.
-- **Updates** (Admin → Updates, and an **Update available** button in the top bar):
+- **Updates** (the top-bar button: **Up to date**, or in amber **Update available**; it opens the Updates window with **Update everything**):
   Backup Suite and the GUI update themselves from this project's GitHub releases,
   like agentw and agentw-gui. Only the latest published release can be installed;
   its archive must match the SHA-256 published with it and every file must stay
@@ -132,7 +132,7 @@ From a release, `sudo ./install.sh` installs Backup Suite, the broker and the GU
 one go (see [INSTALLATION.md](INSTALLATION.md)); the GUI is installed as the login
 that ran sudo, never as root. `./install.sh --gui-only` (no sudo) installs or
 updates only your GUI; `sudo ./install.sh --gui-system` the system-wide GUI. After
-that, updates come from Admin → Updates. By hand:
+that, updates come from the Updates button in the top bar. By hand:
 
 System mode (this server):
 

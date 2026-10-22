@@ -36,7 +36,7 @@ GUI for all admins, or a user-only install without root) are in
 configuration (no jobs, no destinations yet) and prints how to connect to the GUI;
 everything else is set up there. The GUI never runs as root (`./install.sh --gui-only`
 installs just your GUI, without sudo). Updates are installed from the GUI
-(Admin → Updates); configuration, credentials and the resource setup are kept.
+(the Updates button in the top bar); configuration, credentials and the resource setup are kept.
 Without `sudo` it installs for your login only. Options: `./install.sh --help`; details in
 [docs/INSTALLATION.md](docs/INSTALLATION.md).
 

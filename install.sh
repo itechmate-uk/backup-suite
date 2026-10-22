@@ -14,7 +14,7 @@
 #
 # A first install creates a starting configuration (no backup jobs, no
 # destinations) and installs the GUI; everything else is set up in the GUI.
-# Updates are installed from the GUI (Admin -> Updates); running this again
+# Updates are installed from the GUI (the Updates button); running this again
 # from a newer release upgrades too, keeping the configuration, credentials
 # and the resource setup.
 
