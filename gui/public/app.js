@@ -206,8 +206,17 @@
 
   // ------------------------------------------------------------------ dialogs and panels
 
-  function confirmAction({ title = "Please confirm", lines = [], okLabel = "Confirm", danger = false }) {
+  function confirmAction(options) {
+    return chooseAction(options).then((choice) => choice === "ok");
+  }
+
+  // The confirmation dialog with an optional second choice (altLabel): resolves
+  // to "ok", "alt" or "" (cancelled).
+  function chooseAction({ title = "Please confirm", lines = [], okLabel = "Confirm", altLabel = "", danger = false }) {
     const dialog = $("#confirm-dialog");
+    const alt = $("#confirm-alt");
+    alt.hidden = !altLabel;
+    alt.textContent = altLabel;
     $("#confirm-title").textContent = title;
     const body = clear($("#confirm-body"));
     for (const line of lines) {
@@ -222,7 +231,7 @@
     dialog.showModal();
     ok.focus();
     return new Promise((resolve) => {
-      dialog.addEventListener("close", () => resolve(dialog.returnValue === "ok"), { once: true });
+      dialog.addEventListener("close", () => resolve(["ok", "alt"].includes(dialog.returnValue) ? dialog.returnValue : ""), { once: true });
     });
   }
 
@@ -2718,6 +2727,30 @@
     }
   }
 
+  // Confirms a Backup Suite update. With a backup running, the same dialog asks
+  // whether to stop it and update now (safe: the next run picks up the rest) or
+  // to wait for it. Resolves to { stopRunning } or null when cancelled.
+  async function confirmBackendUpdate({ title, lines }) {
+    const service = state.status?.services?.["file-backup.service"] || {};
+    const running = ["active", "activating", "reloading"].includes(service.ActiveState);
+    if (!running) {
+      return (await confirmAction({ title, lines, okLabel: "Update" })) ? { stopRunning: false } : null;
+    }
+    const choice = await chooseAction({
+      title,
+      lines: [
+        h("div", { class: "notice warn" }, `A backup is running now (${fileBackupState(state.status).label}).`),
+        "Stopping it does no harm: what it already backed up stays backed up, nothing on the destination is removed, and the next backup run, shortly after the update, covers the rest. Waiting can take a long time.",
+        ...lines
+      ],
+      okLabel: "Stop the backup and update now",
+      altLabel: "Wait for it, then update"
+    });
+    if (choice === "ok") return { stopRunning: true };
+    if (choice === "alt") return { stopRunning: false };
+    return null;
+  }
+
   // The version to install: the latest release, checked again just before an update
   // starts (a release published after the last check is installed instead).
   async function freshLatestVersion(fallback) {
@@ -2729,18 +2762,21 @@
     }
   }
 
-  async function startTerminalUpdate(version, { confirm = true } = {}) {
-    if (confirm && !(await confirmAction({
-      title: `Update Backup Suite to ${version} in a terminal?`,
-      lines: [
-        "Opens a terminal below that starts the update as root with sudo; sudo asks for your password there (type it in the input box). The update downloads the release, checks its SHA-256, waits for a running backup, runs the tests and rolls back on failure; your configuration is kept.",
-        "Closing the window does not stop the update."
-      ],
-      okLabel: "Open terminal"
-    }))) return false;
+  async function startTerminalUpdate(version, { confirm = true, stopRunning = false } = {}) {
+    if (confirm) {
+      const answer = await confirmBackendUpdate({
+        title: `Update Backup Suite to ${version} in a terminal?`,
+        lines: [
+          "Opens a terminal below that starts the update as root with sudo; sudo asks for your password there (type it in the input box). The update downloads the release, checks its SHA-256, runs the tests and rolls back on failure; your configuration is kept.",
+          "Closing the window does not stop the update."
+        ]
+      });
+      if (!answer) return false;
+      stopRunning = answer.stopRunning;
+    }
     version = await freshLatestVersion(version);
     try {
-      const data = await api("/api/updates/terminal", { method: "POST", body: { version } });
+      const data = await api("/api/updates/terminal", { method: "POST", body: { version, stop_running: stopRunning } });
       showTerminal(`Updating Backup Suite to ${version}`);
       terminalTask = { ...data.task };
       renderTerminal(data.task, data.task.output);
@@ -2831,18 +2867,22 @@
 
   async function startUpdate(target, version, stopRunning = false, { confirm = true } = {}) {
     const backend = target === "backend";
-    if (confirm) {
-      const lines = backend
-        ? [
+    if (confirm && backend) {
+      const answer = await confirmBackendUpdate({
+        title: `Update Backup Suite to ${version}?`,
+        lines: [
           `Downloads Backup Suite ${version} from GitHub, checks it against its published SHA-256, then installs it${state.updates?.backend?.mode === "system" ? " as root" : ""}.`,
           ["Your configuration, credentials, jobs and resource setup are kept.",
-            stopRunning ? "A running backup is stopped (its projects are redone next run)." : "A running backup is waited for, so this may take a while.",
             "The tests run first; if anything fails, the previous version stays in use.",
             state.updates?.gui?.system ? "This system-wide GUI is updated with it and restarts." : "This GUI is updated separately (Update GUI, or Update everything)."]
         ]
-        : [`Downloads the GUI of Backup Suite ${version}, checks its SHA-256 and installs it for your login.`,
-          ["The GUI restarts; this page reloads by itself. If the new GUI does not start, the previous one is put back."]];
-      if (!(await confirmAction({ title: backend ? `Update Backup Suite to ${version}?` : `Update the GUI to ${version}?`, lines, okLabel: "Update" }))) return false;
+      });
+      if (!answer) return false;
+      stopRunning = answer.stopRunning;
+    } else if (confirm) {
+      const lines = [`Downloads the GUI of Backup Suite ${version}, checks its SHA-256 and installs it for your login.`,
+        ["The GUI restarts; this page reloads by itself. If the new GUI does not start, the previous one is put back."]];
+      if (!(await confirmAction({ title: `Update the GUI to ${version}?`, lines, okLabel: "Update" }))) return false;
     }
     version = await freshLatestVersion(version);
     try {
@@ -2860,18 +2900,27 @@
     }
   }
 
-  async function updateEverything(version, stopRunning) {
+  async function updateEverything(version) {
     const data = state.updates;
     const steps = [];
     const terminal = backendNeedsManualUpdate(data);
-    if (terminal) steps.push(`Backup Suite → ${version} in a terminal below: sudo asks for your password there. Configuration is kept; a running backup is waited for; the tests run first and a failure keeps the previous version.`);
-    if (data.backend?.update_available) steps.push(`Backup Suite ${data.backend.installed} → ${version}${data.backend.mode === "system" ? " (as root, through the control service)" : ""}: configuration, credentials, jobs and resource setup are kept; ${stopRunning ? "a running backup is stopped" : "a running backup is waited for"}; the tests run first and a failure keeps the previous version.`);
+    if (terminal) steps.push(`Backup Suite → ${version} in a terminal below: sudo asks for your password there. Configuration is kept; the tests run first and a failure keeps the previous version.`);
+    if (data.backend?.update_available) steps.push(`Backup Suite ${data.backend.installed} → ${version}${data.backend.mode === "system" ? " (as root, through the control service)" : ""}: configuration, credentials, jobs and resource setup are kept; the tests run first and a failure keeps the previous version.`);
     if (data.gui?.update_available) steps.push(`Then this GUI ${data.gui.version} → ${version}, for your login: it restarts and this page reloads; if it does not start, the previous GUI is put back.`);
-    if (!(await confirmAction({ title: `Update everything to ${version}?`, lines: ["Downloads the release from GitHub and checks it against its published SHA-256 before anything is installed.", steps], okLabel: "Update everything" }))) return;
+    const lines = ["Downloads the release from GitHub and checks it against its published SHA-256 before anything is installed.", steps];
+    const backendToo = terminal || data.backend?.update_available;
+    let stopRunning = false;
+    if (backendToo) {
+      const answer = await confirmBackendUpdate({ title: `Update everything to ${version}?`, lines });
+      if (!answer) return;
+      stopRunning = answer.stopRunning;
+    } else if (!(await confirmAction({ title: `Update everything to ${version}?`, lines, okLabel: "Update everything" }))) {
+      return;
+    }
     if (terminal) {
       state.updateAll = { version, step: "backend" };
       renderUpdateButton();
-      await startTerminalUpdate(version, { confirm: false });
+      await startTerminalUpdate(version, { confirm: false, stopRunning });
     } else if (data.backend?.update_available) {
       state.updateAll = { version, step: "backend" };
       renderUpdateButton();
@@ -2912,12 +2961,10 @@
         renderUpdateDialog();
       }
     } }, "Check now");
-    const stopRunning = h("input", { type: "checkbox" });
     const manual = backendNeedsManualUpdate(data);
     const everything = (backend.update_available || gui.update_available || manual) && !running
       ? h("div", { class: "toolbar-row tight end" },
-        backend.update_available ? h("label", { class: "inline-check" }, stopRunning, h("span", {}, "Stop a running backup instead of waiting")) : null,
-        h("button", { type: "button", class: "primary-button", onclick: () => updateEverything(latestVersion, stopRunning.checked) },
+        h("button", { type: "button", class: "primary-button", onclick: () => updateEverything(latestVersion) },
           (backend.update_available || manual) && gui.update_available ? `Update everything to ${latestVersion}…` : (backend.update_available || manual) ? `Update Backup Suite to ${latestVersion}…` : `Update the GUI to ${latestVersion}…`))
       : null;
 
@@ -2930,7 +2977,7 @@
       backendNeedsManualUpdate(data) ? manualUpdateNode(latestVersion) : backend.supported ? null : h("p", { class: "notice info" }, backend.error || "Backup Suite could not be reached."),
       updateStateNode(backend.status), updateLogNode(backend.status),
       backend.update_available && !running
-        ? h("div", { class: "toolbar-row tight end" }, h("button", { type: "button", onclick: () => startUpdate("backend", latestVersion, stopRunning.checked) }, "Only Backup Suite…"))
+        ? h("div", { class: "toolbar-row tight end" }, h("button", { type: "button", onclick: () => startUpdate("backend", latestVersion) }, "Only Backup Suite…"))
         : null);
 
     const guiCard = h("section", { class: "card" },

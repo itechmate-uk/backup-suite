@@ -250,6 +250,9 @@ test("update terminal: in its own unit with a pty; sudo asks there; typed input 
     assert.match(calls, /systemd-run --user --unit backup-suite-update --collect --quiet .* apply --version 9\.9\.9/);
     assert.doesNotMatch(calls, /^sudo /m);
 
+    assert.match(app.updates.terminalBackendCommand("9.9.9", "system", true), /apply --version 9\.9\.9 --stop-running;/);
+    assert.doesNotMatch(app.updates.terminalBackendCommand("9.9.9", "system", false), /--stop-running/);
+
     // System mode: sudo asks in the terminal; the typed line is not echoed.
     const command = app.updates.terminalBackendCommand("9.9.9", "system");
     const task = app.terminals.start(command, { label: "system update test" });

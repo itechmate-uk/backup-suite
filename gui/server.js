@@ -292,7 +292,7 @@ function createApp({ env = process.env } = {}) {
     if (req.method === "POST" && pathname === "/api/updates/terminal") {
       const body = await readBody(req);
       try {
-        const command = updates.terminalBackendCommand(String(body.version || ""), client.mode().mode);
+        const command = updates.terminalBackendCommand(String(body.version || ""), client.mode().mode, body.stop_running === true);
         return sendJson(res, 202, { ok: true, task: terminals.start(command, { label: "Backup Suite update" }) });
       } catch (error) {
         return sendError(res, error.code === "invalid_request" ? 400 : error.code === "busy" ? 409 : 502, error.code || "error", error.message);

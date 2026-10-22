@@ -270,6 +270,15 @@ async function main() {
         if (!(await page.$('#update-body button:has-text("Only Backup Suite")'))) failures.push(`${label}/${scheme}: no Backup Suite update button`);
         if (!(await page.$('#update-body button:has-text("Only the GUI")'))) failures.push(`${label}/${scheme}: no GUI update button`);
         await page.screenshot({ path: path.join(screenshotDir, `${label}-${scheme}-updates.png`), fullPage: true });
+        // A backup is running in this fixture: the update asks whether to stop it.
+        await page.click('#update-body button:has-text("Update everything to 9.9.9")');
+        await page.waitForSelector("#confirm-dialog[open]");
+        if ((await page.textContent("#confirm-ok")).trim() !== "Stop the backup and update now") failures.push(`${label}/${scheme}: no stop-and-update choice`);
+        if (await page.$("#confirm-alt[hidden]") || (await page.textContent("#confirm-alt")).trim() !== "Wait for it, then update") failures.push(`${label}/${scheme}: no wait choice`);
+        await page.screenshot({ path: path.join(screenshotDir, `${label}-${scheme}-update-running-backup.png`) });
+        await page.click('#confirm-dialog button[value="cancel"]');
+        await page.waitForFunction(() => !document.querySelector("#confirm-dialog[open]"));
+        if (!(await page.$("#update-dialog[open]"))) failures.push(`${label}/${scheme}: cancelling closed the Updates window`);
         // The update terminal (shown for a Backup Suite older than 1.1): its layout.
         await page.evaluate(() => {
           document.querySelector("#update-terminal").hidden = false;
